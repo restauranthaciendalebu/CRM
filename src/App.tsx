@@ -10,19 +10,19 @@ import { themes } from "./theme";
 
 export default function App() {
   const [currentRole, setCurrentRole] = useState<"client" | "waiter" | "kitchen" | "admin">("client");
-  const [clientTableId, setClientTableId] = useState("t5"); // Default simulated Mesa 5
+  const [clientTableId, setClientTableId] = useState("t5");
   const [activeUser, setActiveUser] = useState<User | null>(null);
-  
+
   // Theme state
   const [themeId, setThemeId] = useState<string>(() => {
     return localStorage.getItem("hacienda-app-theme-id") || "amber";
   });
-  const [showThemeExplorer, setShowThemeExplorer] = useState(true); // Default to true so it is shown right away
+  const [showThemeExplorer, setShowThemeExplorer] = useState(true);
 
   // App database state
   const [state, setState] = useState<RestaurantState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [isDemoMode, setIsDemoMode] = useState(false);
 
   // Apply theme colors dynamically using CSS Custom Properties
   useEffect(() => {
@@ -38,19 +38,22 @@ export default function App() {
     localStorage.setItem("hacienda-app-theme-id", themeId);
   }, [themeId]);
 
-  // Core fetch state
+  // Core fetch state — falls back to demo data when server is unavailable (GitHub Pages)
   const fetchState = async () => {
     try {
       const res = await fetch("/api/state");
       if (res.ok) {
         const data = await res.json();
         setState(data);
-        setError(null);
+        setIsDemoMode(false);
       } else {
-        setError("Error al cargar el estado del servidor.");
+        throw new Error("Server error");
       }
-    } catch (err) {
-      setError("No se pudo establecer conexión con el servidor backend de Hacienda.");
+    } catch {
+      // No server available (GitHub Pages / offline) — load demo data silently
+      const { DEMO_STATE } = await import("./demoState");
+      setState((prev) => prev ?? DEMO_STATE);
+      setIsDemoMode(true);
     } finally {
       setIsLoading(false);
     }
@@ -58,51 +61,35 @@ export default function App() {
 
   useEffect(() => {
     fetchState();
-    
     // Poll state every 4 seconds as global background sync
-    const interval = setInterval(() => {
-      fetchState();
-    }, 4000);
+    const interval = setInterval(() => { fetchState(); }, 4000);
     return () => clearInterval(interval);
   }, []);
 
-  const handleLoginSuccess = (user: User) => {
-    setActiveUser(user);
-  };
-
-  const handleLogout = () => {
-    setActiveUser(null);
-  };
+  const handleLoginSuccess = (user: User) => { setActiveUser(user); };
+  const handleLogout = () => { setActiveUser(null); };
 
   if (isLoading) {
     return (
       <div className="bg-zinc-950 min-h-screen text-white flex flex-col items-center justify-center p-6 text-center">
         <div className="w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4" />
         <h2 className="text-xl font-bold font-sans">Restaurant Hacienda</h2>
-        <p className="text-zinc-500 text-xs mt-1">Conectando con el servidor POS e inicializando carta digital...</p>
+        <p className="text-zinc-500 text-xs mt-1">Inicializando carta digital...</p>
       </div>
     );
   }
 
-  if (error || !state) {
-    return (
-      <div className="bg-zinc-950 min-h-screen text-white flex flex-col items-center justify-center p-6 text-center">
-        <div className="bg-red-500/10 border border-red-500/20 rounded-2xl p-6 max-w-sm">
-          <span className="text-red-400 font-bold block text-sm">⚠️ Error de Ingress de Red</span>
-          <p className="text-zinc-400 text-xs mt-2">{error || "Servidor offline o inicializando."}</p>
-          <button
-            onClick={fetchState}
-            className="mt-4 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold py-2 px-4 rounded-xl text-xs transition-colors cursor-pointer"
-          >
-            Reintentar Conexión
-          </button>
-        </div>
-      </div>
-    );
-  }
+  if (!state) return null;
 
   return (
     <div className="min-h-screen bg-zinc-100 flex flex-col" id="restaurant-hacienda-app-root">
+      {/* Demo mode banner */}
+      {isDemoMode && (
+        <div className="bg-amber-500/90 text-zinc-900 text-xs font-semibold text-center py-1.5 px-4">
+          🎯 Modo Demo — Explorando con datos de ejemplo. Conecta el servidor para uso real.
+        </div>
+      )}
+
       {/* Simulation switcher top header */}
       <RoleSelector
         currentRole={currentRole}
@@ -130,10 +117,10 @@ export default function App() {
       {/* Main dynamic view panel based on selected role */}
       <main className="flex-1">
         {currentRole === "client" && (
-          <ClienteView 
-            state={state} 
-            activeTableId={clientTableId} 
-            onRefreshState={fetchState} 
+          <ClienteView
+            state={state}
+            activeTableId={clientTableId}
+            onRefreshState={fetchState}
           />
         )}
 
@@ -148,16 +135,16 @@ export default function App() {
         )}
 
         {currentRole === "kitchen" && (
-          <KitchenKDS 
-            state={state} 
-            onRefreshState={fetchState} 
+          <KitchenKDS
+            state={state}
+            onRefreshState={fetchState}
           />
         )}
 
         {currentRole === "admin" && (
-          <AdminView 
-            state={state} 
-            onRefreshState={fetchState} 
+          <AdminView
+            state={state}
+            onRefreshState={fetchState}
           />
         )}
       </main>
