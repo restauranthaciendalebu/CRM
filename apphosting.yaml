@@ -1,0 +1,14 @@
+runConfig:
+  runtime: nodejs20
+  cpu: 1
+  memoryMiB: 512
+  minInstances: 0
+  maxInstances: 3
+
+env:
+  - variable: NODE_ENV
+    value: production
+
+scripts:
+  buildCommand: npm install && npm run build
+  runCommand: npm run start

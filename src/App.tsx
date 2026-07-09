@@ -7,6 +7,7 @@ import KitchenKDS from "./components/KitchenKDS";
 import AdminView from "./components/AdminView";
 import ThemeCarousel from "./components/ThemeCarousel";
 import { themes } from "./theme";
+import { subscribeToState } from "./dbClient";
 
 export default function App() {
   const [currentRole, setCurrentRole] = useState<"client" | "waiter" | "kitchen" | "admin">("client");
@@ -38,7 +39,7 @@ export default function App() {
     localStorage.setItem("hacienda-app-theme-id", themeId);
   }, [themeId]);
 
-  // Core fetch state — falls back to demo data when server is unavailable (GitHub Pages)
+  // Core fetch state — fallback when Firestore snap fails
   const fetchState = async () => {
     try {
       const res = await fetch("/api/state");
@@ -46,24 +47,21 @@ export default function App() {
         const data = await res.json();
         setState(data);
         setIsDemoMode(false);
-      } else {
-        throw new Error("Server error");
       }
     } catch {
-      // No server available (GitHub Pages / offline) — load demo data silently
-      const { DEMO_STATE } = await import("./demoState");
-      setState((prev) => prev ?? DEMO_STATE);
-      setIsDemoMode(true);
-    } finally {
-      setIsLoading(false);
+      // Handled by snapshot listener
     }
   };
 
   useEffect(() => {
-    fetchState();
-    // Poll state every 4 seconds as global background sync
-    const interval = setInterval(() => { fetchState(); }, 4000);
-    return () => clearInterval(interval);
+    // Subscribe to real-time updates from Firebase Firestore
+    const unsubscribe = subscribeToState((newState) => {
+      setState(newState);
+      setIsDemoMode(false); // Sincronizado con Firebase Firestore
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const handleLoginSuccess = (user: User) => { setActiveUser(user); };
