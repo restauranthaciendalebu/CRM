@@ -1,0 +1,6 @@
+{
+  "name": "Restaurant Hacienda",
+  "description": "Sistema de Carta Digital, Toma de Pedidos, KDS, CRM y Gestión en tiempo real para Restaurant Hacienda.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
