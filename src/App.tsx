@@ -18,7 +18,7 @@ export default function App() {
   const [themeId, setThemeId] = useState<string>(() => {
     return localStorage.getItem("hacienda-app-theme-id") || "amber";
   });
-  const [showThemeExplorer, setShowThemeExplorer] = useState(true);
+  const [showThemeExplorer, setShowThemeExplorer] = useState(false);
 
   // App database state
   const [state, setState] = useState<RestaurantState | null>(null);
