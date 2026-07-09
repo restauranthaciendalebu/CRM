@@ -39,6 +39,20 @@ onSnapshot(STATE_DOC_REF, async (docSnap) => {
   if (docSnap.exists()) {
     const data = docSnap.data() as RestaurantState;
     currentCachedState = data;
+    
+    // Auto-repair if old test PINs are present in the Firestore document
+    const hasCorrectPin = data.users?.some(u => u.pin === "1234");
+    if (!hasCorrectPin) {
+      console.log("Updating users database with correct PINs...");
+      try {
+        await updateState(s => {
+          s.users = DEMO_STATE.users;
+        });
+      } catch (err) {
+        console.error("Failed to auto-repair PINs:", err);
+      }
+    }
+
     stateListeners.forEach(listener => listener(data));
   } else {
     // Database hasn't been initialized yet. Save the default initial state

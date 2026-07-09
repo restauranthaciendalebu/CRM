@@ -13,9 +13,9 @@ import {
 
 export const DEMO_STATE: RestaurantState = {
   users: [
-    { id: "u1", pin: "1111", name: "Carlos Waiter", role: Role.WAITER },
-    { id: "u2", pin: "2222", name: "Ana Cocina", role: Role.KITCHEN },
-    { id: "u3", pin: "9999", name: "Admin Hacienda", role: Role.ADMIN },
+    { id: "u1", pin: "2222", name: "Juan (Mozo)", role: Role.WAITER },
+    { id: "u2", pin: "3333", name: "Carlos (Cocina)", role: Role.KITCHEN },
+    { id: "u3", pin: "1234", name: "Don Ricardo (Admin)", role: Role.ADMIN },
   ],
   tables: [
     { id: "t1", number: 1, seats: 2, status: TableStatus.FREE, zone: "Salón Principal", x: 10, y: 10 },

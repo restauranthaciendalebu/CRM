@@ -5,6 +5,7 @@ import ClienteView from "./components/ClienteView";
 import MozoView from "./components/MozoView";
 import KitchenKDS from "./components/KitchenKDS";
 import AdminView from "./components/AdminView";
+import AdminLogin from "./components/AdminLogin";
 import ThemeCarousel from "./components/ThemeCarousel";
 import { themes } from "./theme";
 import { subscribeToState } from "./dbClient";
@@ -140,10 +141,17 @@ export default function App() {
         )}
 
         {currentRole === "admin" && (
-          <AdminView
-            state={state}
-            onRefreshState={fetchState}
-          />
+          activeUser && activeUser.role === "ADMIN" ? (
+            <AdminView
+              state={state}
+              onRefreshState={fetchState}
+            />
+          ) : (
+            <AdminLogin
+              onLoginSuccess={handleLoginSuccess}
+              onLoginError={(err) => console.log("Admin login error:", err)}
+            />
+          )
         )}
       </main>
     </div>
