@@ -167,10 +167,11 @@ export default function App() {
         )}
 
         {currentRole === "admin" && (
-          activeUser && activeUser.role === "ADMIN" ? (
+          activeUser && (activeUser.role === "ADMIN" || (activeUser.permissions && activeUser.permissions.length > 0)) ? (
             <AdminView
               state={state}
               onRefreshState={fetchState}
+              activeUser={activeUser}
             />
           ) : (
             <AdminLogin

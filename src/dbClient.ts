@@ -591,13 +591,15 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
     // 11. Admin Menu & Category Actions
     if (path === "/api/products" && method === "POST") {
-      const { id, name, description, price, imageUrl, categoryId, allergens, isAvailable, recipe } = body;
+      const { id, name, description, price, imageUrl, categoryId, allergens, isAvailable, recipe, operatorName } = body;
       let savedProduct: any = null;
 
       await updateState(s => {
+        if (!s.auditLogs) s.auditLogs = [];
         if (id) {
           const prod = s.products.find(p => p.id === id);
           if (prod) {
+            const prevPrice = prod.price;
             prod.name = name;
             prod.description = description;
             prod.price = Number(price);
@@ -607,6 +609,13 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             prod.isAvailable = isAvailable !== undefined ? isAvailable : prod.isAvailable;
             prod.recipe = recipe || prod.recipe || [];
             savedProduct = prod;
+
+            s.auditLogs.push({
+              id: "audit_" + Math.random().toString(36).substring(2, 11),
+              action: "Producto Modificado",
+              details: `Se modificó el producto "${name}" (Precio anterior: $${prevPrice.toLocaleString("es-CL")} -> Nuevo precio: $${Number(price).toLocaleString("es-CL")}) por ${operatorName || "Administrador"}.`,
+              createdAt: new Date().toISOString()
+            });
           }
         } else {
           const newId = "p_" + Math.random().toString(36).substring(2, 11);
@@ -622,6 +631,13 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             recipe: recipe || []
           };
           s.products.push(savedProduct);
+
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Producto Creado",
+            details: `Se creó el producto "${name}" con precio $${Number(price).toLocaleString("es-CL")} en categoría "${s.categories.find(c => c.id === categoryId)?.name || categoryId}" por ${operatorName || "Administrador"}.`,
+            createdAt: new Date().toISOString()
+          });
         }
       });
 
@@ -632,15 +648,121 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     const productToggleMatch = path.match(/^\/api\/products\/([^\/]+)\/toggle-availability$/);
     if (productToggleMatch && method === "POST") {
       const id = productToggleMatch[1];
+      const { operatorName } = body;
       let updatedProd: any = null;
       await updateState(s => {
+        if (!s.auditLogs) s.auditLogs = [];
         const prod = s.products.find(p => p.id === id);
         if (prod) {
           prod.isAvailable = !prod.isAvailable;
           updatedProd = prod;
+
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Estado de Producto",
+            details: `Se cambió el estado del producto "${prod.name}" a ${prod.isAvailable ? "Activo" : "Pausado"} por ${operatorName || "Administrador"}.`,
+            createdAt: new Date().toISOString()
+          });
         }
       });
       return createResponse({ success: true, product: updatedProd });
+    }
+
+    // 11.5 Admin User/Staff Management
+    if (path === "/api/users" && method === "GET") {
+      const state = currentCachedState || DEMO_STATE;
+      return createResponse(state.users);
+    }
+
+    if (path === "/api/users" && method === "POST") {
+      const { id, name, pin, role, permissions, operatorName } = body;
+      let savedUser: any = null;
+      let errorMsg = "";
+
+      await updateState(s => {
+        if (!s.auditLogs) s.auditLogs = [];
+        
+        // PIN uniqueness check (excluding self)
+        const duplicate = s.users.find(u => u.pin === pin && u.id !== id);
+        if (duplicate) {
+          errorMsg = `El PIN ${pin} ya está siendo utilizado por ${duplicate.name}.`;
+          return;
+        }
+
+        if (id) {
+          const user = s.users.find(u => u.id === id);
+          if (user) {
+            const prevName = user.name;
+            const prevRole = user.role;
+            const prevPermissions = user.permissions || [];
+
+            user.name = name;
+            user.pin = pin;
+            user.role = role;
+            user.permissions = permissions || [];
+            savedUser = user;
+
+            s.auditLogs.push({
+              id: "audit_" + Math.random().toString(36).substring(2, 11),
+              action: "Personal Modificado",
+              details: `Se modificó el perfil de "${prevName}" (ahora: "${name}", Rol: ${prevRole} -> ${role}, Permisos: [${prevPermissions.join(", ")}] -> [${(permissions || []).join(", ")}]) por ${operatorName || "Administrador"}.`,
+              createdAt: new Date().toISOString()
+            });
+          }
+        } else {
+          const newId = "u_" + Math.random().toString(36).substring(2, 11);
+          savedUser = {
+            id: newId,
+            name,
+            pin,
+            role,
+            permissions: permissions || []
+          };
+          s.users.push(savedUser);
+
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Personal Creado",
+            details: `Se creó el perfil de "${name}" con Rol: ${role}, PIN: ${pin}, Permisos: [${(permissions || []).join(", ")}] por ${operatorName || "Administrador"}.`,
+            createdAt: new Date().toISOString()
+          });
+        }
+      });
+
+      if (errorMsg) {
+        return createResponse({ error: errorMsg }, 400);
+      }
+      return createResponse({ success: true, user: savedUser });
+    }
+
+    const userDeleteMatch = path.match(/^\/api\/users\/([^\/]+)\/delete$/);
+    if (userDeleteMatch && method === "POST") {
+      const id = userDeleteMatch[1];
+      const { operatorName } = body;
+      let errorMsg = "";
+
+      await updateState(s => {
+        if (!s.auditLogs) s.auditLogs = [];
+        const index = s.users.findIndex(u => u.id === id);
+        if (index !== -1) {
+          const user = s.users[index];
+          s.users.splice(index, 1);
+
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Personal Eliminado",
+            details: `Se eliminó el perfil de "${user.name}" (Rol: ${user.role}) por ${operatorName || "Administrador"}.`,
+            createdAt: new Date().toISOString()
+          });
+        } else {
+          errorMsg = "Usuario no encontrado";
+        }
+      });
+
+      if (errorMsg) {
+        return createResponse({ error: errorMsg }, 404);
+      }
+      return createResponse({ success: true });
     }
 
     // 12. Admin Inventory management

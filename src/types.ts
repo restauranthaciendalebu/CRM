@@ -62,6 +62,7 @@ export interface User {
   pin: string;
   name: string;
   role: Role;
+  permissions?: string[];
 }
 
 export interface Table {

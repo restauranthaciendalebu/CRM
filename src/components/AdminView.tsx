@@ -8,7 +8,9 @@ import {
   Customer, 
   CustomerLoyaltyTx, 
   Promotion, 
-  Payment 
+  Payment,
+  User,
+  Role
 } from "../types";
 import { 
   TrendingUp, 
@@ -34,24 +36,74 @@ import {
   History,
   FileText,
   RefreshCw,
-  FileDown
+  FileDown,
+  Shield,
+  Lock,
+  Key
 } from "lucide-react";
 
 interface AdminViewProps {
   state: RestaurantState;
   onRefreshState: () => void;
+  activeUser: User | null;
 }
 
-export default function AdminView({ state, onRefreshState }: AdminViewProps) {
-  const [activeTab, setActiveTab] = useState<"reports" | "boletas" | "menu" | "crm" | "inventory" | "qr" | "audits">("reports");
+export default function AdminView({ state, onRefreshState, activeUser }: AdminViewProps) {
+  const [activeTab, setActiveTab] = useState<"reports" | "boletas" | "menu" | "crm" | "inventory" | "qr" | "personal" | "audits">("reports");
   
+  // Permission helper
+  const hasPermission = (permission: string) => {
+    if (!activeUser) return false;
+    if (activeUser.role === Role.ADMIN) return true;
+    return activeUser.permissions?.includes(permission) || false;
+  };
+
+  const visibleTabs = [
+    { id: "reports", name: "📈 Reportes Analíticos", perm: "view_reports" },
+    { id: "boletas", name: "🧾 Historial de Boletas", perm: "view_reports" },
+    { id: "menu", name: "🍔 Carta & Precios", perm: "manage_menu" },
+    { id: "crm", name: "👥 CRM & Fidelidad", perm: "view_reports" },
+    { id: "inventory", name: "📦 Inventario", perm: "manage_inventory" },
+    { id: "qr", name: "📱 QR Mesas", perm: "manage_menu" },
+    { id: "personal", name: "👥 Personal", perm: "manage_staff" },
+    { id: "audits", name: "🛡️ Auditoría & Backups", perm: "manage_staff" },
+  ].filter(t => hasPermission(t.perm));
+
+  useEffect(() => {
+    if (visibleTabs.length > 0 && !visibleTabs.some(t => t.id === activeTab)) {
+      setActiveTab(visibleTabs[0].id as any);
+    }
+  }, [activeUser, state]);
+
   // Inventory actions
   const [addingStockIngId, setAddingStockIngId] = useState<string | null>(null);
   const [addingStockQty, setAddingStockQty] = useState(1000);
   
-  // Menu action modal
+  // Menu action modal (Quick price edit)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editPrice, setEditPrice] = useState(0);
+
+  // User/Staff management state
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [staffName, setStaffName] = useState("");
+  const [staffPin, setStaffPin] = useState("");
+  const [staffRole, setStaffRole] = useState<Role>(Role.WAITER);
+  const [staffPermissions, setStaffPermissions] = useState<string[]>([]);
+  const [staffError, setStaffError] = useState("");
+  const [isStaffSaving, setIsStaffSaving] = useState(false);
+
+  // Product management state
+  const [isProductModalOpen, setIsProductModalOpen] = useState(false);
+  const [editingProductModal, setEditingProductModal] = useState<Product | null>(null);
+  const [prodName, setProdName] = useState("");
+  const [prodPrice, setProdPrice] = useState(0);
+  const [prodCategoryId, setProdCategoryId] = useState("");
+  const [prodDescription, setProdDescription] = useState("");
+  const [prodImageUrl, setProdImageUrl] = useState("");
+  const [prodAllergens, setProdAllergens] = useState<string[]>([]);
+  const [prodError, setProdError] = useState("");
+  const [isProductSaving, setIsProductSaving] = useState(false);
 
   // CRM action state
   const [crmSearch, setCrmSearch] = useState("");
@@ -105,7 +157,8 @@ export default function AdminView({ state, onRefreshState }: AdminViewProps) {
           name: ing.name,
           stock: ing.stock + Number(addingStockQty),
           unit: ing.unit,
-          minStock: ing.minStock
+          minStock: ing.minStock,
+          operatorName: activeUser?.name || "Administrador"
         })
       });
       if (res.ok) {
@@ -126,7 +179,8 @@ export default function AdminView({ state, onRefreshState }: AdminViewProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...editingProduct,
-          price: editPrice
+          price: editPrice,
+          operatorName: activeUser?.name || "Administrador"
         })
       });
       if (res.ok) {
@@ -142,13 +196,165 @@ export default function AdminView({ state, onRefreshState }: AdminViewProps) {
   const handleToggleProduct = async (prodId: string) => {
     try {
       const res = await fetch(`/api/products/${prodId}/toggle-availability`, {
-        method: "POST"
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operatorName: activeUser?.name || "Administrador"
+        })
       });
       if (res.ok) {
         onRefreshState();
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  // 3.5 User/Staff action handlers
+  const openAddUserModal = () => {
+    setEditingUser(null);
+    setStaffName("");
+    setStaffPin("");
+    setStaffRole(Role.WAITER);
+    setStaffPermissions([]);
+    setStaffError("");
+    setIsUserModalOpen(true);
+  };
+
+  const openEditUserModal = (user: User) => {
+    setEditingUser(user);
+    setStaffName(user.name);
+    setStaffPin(user.pin);
+    setStaffRole(user.role);
+    setStaffPermissions(user.permissions || []);
+    setStaffError("");
+    setIsUserModalOpen(true);
+  };
+
+  const handleSaveUser = async () => {
+    if (!staffName.trim()) {
+      setStaffError("El nombre es requerido.");
+      return;
+    }
+    if (staffPin.length !== 4 || isNaN(Number(staffPin))) {
+      setStaffError("El PIN debe ser de exactamente 4 números.");
+      return;
+    }
+    setIsStaffSaving(true);
+    setStaffError("");
+    try {
+      const res = await fetch("/api/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingUser?.id,
+          name: staffName,
+          pin: staffPin,
+          role: staffRole,
+          permissions: staffPermissions,
+          operatorName: activeUser?.name || "Administrador"
+        })
+      });
+      if (res.ok) {
+        setIsUserModalOpen(false);
+        onRefreshState();
+      } else {
+        const err = await res.json();
+        setStaffError(err.error || "Error al guardar el usuario.");
+      }
+    } catch (e) {
+      setStaffError("Error de red.");
+    } finally {
+      setIsStaffSaving(false);
+    }
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    if (!window.confirm("¿Estás seguro de que deseas eliminar este perfil de personal?")) return;
+    try {
+      const res = await fetch(`/api/users/${userId}/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          operatorName: activeUser?.name || "Administrador"
+        })
+      });
+      if (res.ok) {
+        onRefreshState();
+      } else {
+        alert("Error al eliminar el usuario.");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const togglePermission = (perm: string) => {
+    if (staffPermissions.includes(perm)) {
+      setStaffPermissions(prev => prev.filter(p => p !== perm));
+    } else {
+      setStaffPermissions(prev => [...prev, perm]);
+    }
+  };
+
+  // 3.6 Product action handlers
+  const openAddProductModal = () => {
+    setEditingProductModal(null);
+    setProdName("");
+    setProdPrice(0);
+    setProdCategoryId(state.categories[0]?.id || "");
+    setProdDescription("");
+    setProdImageUrl("");
+    setProdAllergens([]);
+    setProdError("");
+    setIsProductModalOpen(true);
+  };
+
+  const handleSaveProduct = async () => {
+    if (!prodName.trim()) {
+      setProdError("El nombre es requerido.");
+      return;
+    }
+    if (prodPrice <= 0) {
+      setProdError("El precio debe ser mayor a 0.");
+      return;
+    }
+    setIsProductSaving(true);
+    setProdError("");
+    try {
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingProductModal?.id,
+          name: prodName,
+          price: prodPrice,
+          categoryId: prodCategoryId,
+          description: prodDescription,
+          imageUrl: prodImageUrl,
+          allergens: prodAllergens,
+          operatorName: activeUser?.name || "Administrador"
+        })
+      });
+      if (res.ok) {
+        setIsProductModalOpen(false);
+        onRefreshState();
+      } else {
+        const err = await res.json();
+        setProdError(err.error || "Error al guardar el producto.");
+      }
+    } catch (e) {
+      setProdError("Error de red.");
+    } finally {
+      setIsProductSaving(false);
+    }
+  };
+
+  const toggleAllergen = (allergen: string) => {
+    if (prodAllergens.includes(allergen)) {
+      setProdAllergens(prev => prev.filter(a => a !== allergen));
+    } else {
+      setProdAllergens(prev => [...prev, allergen]);
     }
   };
 
@@ -185,15 +391,7 @@ export default function AdminView({ state, onRefreshState }: AdminViewProps) {
 
       {/* ADMIN SECTION SUB-TABS */}
       <div className="flex flex-wrap border-b border-zinc-200 bg-white">
-        {[
-          { id: "reports", name: "📈 Reportes Analíticos" },
-          { id: "boletas", name: "🧾 Historial de Boletas" },
-          { id: "menu", name: "🍔 Carta & Precios" },
-          { id: "crm", name: "👥 CRM & Fidelidad" },
-          { id: "inventory", name: "📦 Inventario" },
-          { id: "qr", name: "📱 QR Mesas" },
-          { id: "audits", name: "🛡️ Auditoría & Backups" },
-        ].map((tab) => (
+        {visibleTabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
@@ -371,10 +569,16 @@ export default function AdminView({ state, onRefreshState }: AdminViewProps) {
         {activeTab === "menu" && (
           <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm" id="admin-menu-tab">
             <div className="flex justify-between items-center mb-5">
-              <div>
+              <div className="text-left">
                 <h3 className="font-bold text-zinc-900 text-sm">Hamburguesas, Carnes y Platos</h3>
                 <p className="text-xs text-zinc-400 mt-0.5">Controla los precios de venta y desactiva platos agotados de forma inmediata.</p>
               </div>
+              <button
+                onClick={openAddProductModal}
+                className="bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold text-xs py-2 px-4 rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+              >
+                <Plus className="w-4 h-4" /> Agregar Nuevo Producto
+              </button>
             </div>
 
             <div className="space-y-3">
@@ -993,7 +1197,311 @@ export default function AdminView({ state, onRefreshState }: AdminViewProps) {
           <QRGenerator tables={state.tables} restaurantName="Restaurant Hacienda" />
         )}
 
+        {/* TAB 8: PERSONAL & ROLES MANAGEMENT */}
+        {activeTab === "personal" && (
+          <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm space-y-6 text-left" id="admin-personal-tab">
+            <div className="flex justify-between items-center pb-2 border-b border-zinc-100">
+              <div>
+                <h3 className="font-bold text-zinc-900 text-sm flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-amber-500" /> Control de Personal y Autorizaciones
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">Administra los usuarios del sistema, sus PINs de acceso y sus permisos específicos.</p>
+              </div>
+              <button
+                onClick={openAddUserModal}
+                className="bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold text-xs py-2 px-4 rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer animate-fade-in"
+              >
+                <UserPlus className="w-4 h-4" /> Agregar Personal
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {state.users.map((u) => {
+                const userPermissions = u.permissions || [];
+                return (
+                  <div key={u.id} className="border border-zinc-200 hover:border-amber-500/40 hover:shadow-md transition-all rounded-2xl p-4 flex flex-col justify-between bg-zinc-50/50">
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="font-extrabold text-sm text-zinc-900 block">{u.name}</span>
+                          <span className="text-[10px] bg-zinc-200 text-zinc-700 px-2 py-0.5 rounded font-bold uppercase mt-1 inline-block">
+                            {u.role === "ADMIN" ? "Administrador" : u.role === "WAITER" ? "Mozo / POS" : "Cocinero KDS"}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1 text-xs font-mono font-bold text-zinc-700">
+                          <Lock className="w-3 h-3 text-zinc-400" />
+                          <span>PIN: {u.pin}</span>
+                        </div>
+                      </div>
+
+                      <div className="pt-2 border-t border-zinc-200/50 space-y-1">
+                        <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">Autorizaciones</span>
+                        {userPermissions.length === 0 ? (
+                          <span className="text-[10px] text-zinc-400 italic block">Sin permisos administrativos asignados</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {userPermissions.map(p => (
+                              <span key={p} className="bg-amber-500/10 text-amber-800 text-[9px] font-bold px-2 py-0.5 rounded border border-amber-500/20">
+                                {p === "manage_menu" ? "🍔 Carta" : p === "manage_inventory" ? "📦 Stock" : p === "view_reports" ? "📊 Ventas" : "👥 Personal"}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 mt-4 pt-3 border-t border-zinc-200/50">
+                      <button
+                        onClick={() => openEditUserModal(u)}
+                        className="flex-1 bg-white hover:bg-zinc-50 border border-zinc-200 text-zinc-700 font-bold text-xs py-2 rounded-xl transition-all cursor-pointer text-center"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => handleDeleteUser(u.id)}
+                        disabled={u.id === activeUser?.id}
+                        className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-xl transition-all disabled:opacity-30 cursor-pointer"
+                        title={u.id === activeUser?.id ? "No puedes eliminar tu propio usuario" : "Eliminar personal"}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
       </div>
+
+      {/* MODAL: AGREGAR / EDITAR PERSONAL */}
+      {isUserModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white w-full max-w-md rounded-2xl overflow-hidden shadow-2xl border border-zinc-200 max-h-[90vh] flex flex-col text-left animate-slide-up">
+            <div className="p-5 border-b border-zinc-100 flex items-center justify-between">
+              <h3 className="text-base font-extrabold text-zinc-900 flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-amber-500" />
+                {editingUser ? "Editar Personal" : "Agregar Nuevo Personal"}
+              </h3>
+              <button onClick={() => setIsUserModalOpen(false)} className="text-zinc-400 hover:text-zinc-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              {staffError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold p-3 rounded-xl flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span>{staffError}</span>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-700">Nombre Completo</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Pedro González"
+                  value={staffName}
+                  onChange={(e) => setStaffName(e.target.value)}
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950 font-medium"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-700">PIN (4 números)</label>
+                  <input
+                    type="password"
+                    maxLength={4}
+                    placeholder="Ej: 5555"
+                    value={staffPin}
+                    onChange={(e) => setStaffPin(e.target.value.replace(/\D/g, ""))}
+                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs text-center font-mono font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-700">Rol Principal</label>
+                  <select
+                    value={staffRole}
+                    onChange={(e) => setStaffRole(e.target.value as Role)}
+                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950 font-bold"
+                  >
+                    <option value={Role.WAITER}>Mozo (POS)</option>
+                    <option value={Role.KITCHEN}>Cocina (KDS)</option>
+                    <option value={Role.ADMIN}>Administrador</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="pt-2 space-y-2">
+                <label className="text-xs font-bold text-zinc-700 block">Autorizaciones / Permisos</label>
+                <div className="space-y-2 bg-zinc-50 border border-zinc-200 p-4 rounded-2xl">
+                  {[
+                    { id: "manage_menu", title: "🍔 Gestionar Carta & Precios", desc: "Permite agregar platos, cambiar precios y pausar disponibilidad." },
+                    { id: "manage_inventory", title: "📦 Gestionar Inventario", desc: "Permite revisar y ajustar stock de ingredientes." },
+                    { id: "view_reports", title: "📊 Ver Ventas y Reportes", desc: "Permite ver cierres de turno, historial de boletas y estadísticas." },
+                    { id: "manage_staff", title: "👥 Gestionar Personal y Sistema", desc: "Permite crear usuarios, modificar permisos y cambiar modo de mesa." },
+                  ].map((p) => (
+                    <label key={p.id} className="flex items-start gap-3 cursor-pointer p-1.5 hover:bg-zinc-200/40 rounded-lg transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={staffPermissions.includes(p.id) || staffRole === Role.ADMIN}
+                        disabled={staffRole === Role.ADMIN}
+                        onChange={() => togglePermission(p.id)}
+                        className="mt-0.5 rounded text-amber-600 focus:ring-amber-500 border-zinc-300"
+                      />
+                      <div>
+                        <span className="text-xs font-bold text-zinc-900 block">{p.title}</span>
+                        <span className="text-[10px] text-zinc-400 block mt-0.5">{p.desc}</span>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-zinc-100 bg-zinc-50 flex gap-2">
+              <button
+                onClick={() => setIsUserModalOpen(false)}
+                className="flex-1 py-3 text-zinc-500 hover:text-zinc-700 font-bold text-xs cursor-pointer text-center"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveUser}
+                disabled={isStaffSaving}
+                className="flex-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-extrabold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isStaffSaving ? "Guardando..." : "Guardar Personal"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: AGREGAR / EDITAR PRODUCTO */}
+      {isProductModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white w-full max-w-md rounded-2xl overflow-hidden shadow-2xl border border-zinc-200 max-h-[90vh] flex flex-col text-left animate-slide-up">
+            <div className="p-5 border-b border-zinc-100 flex items-center justify-between">
+              <h3 className="text-base font-extrabold text-zinc-900 flex items-center gap-2">
+                <UtensilsCrossed className="w-5 h-5 text-amber-500" />
+                Agregar Nuevo Plato
+              </h3>
+              <button onClick={() => setIsProductModalOpen(false)} className="text-zinc-400 hover:text-zinc-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 flex-1">
+              {prodError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-xs font-bold p-3 rounded-xl flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span>{prodError}</span>
+                </div>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-700">Nombre del Plato / Producto</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Lomo Liso Premium"
+                  value={prodName}
+                  onChange={(e) => setProdName(e.target.value)}
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950 font-medium"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-700">Categoría</label>
+                  <select
+                    value={prodCategoryId}
+                    onChange={(e) => setProdCategoryId(e.target.value)}
+                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950 font-bold"
+                  >
+                    {state.categories.map(cat => (
+                      <option key={cat.id} value={cat.id}>{cat.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-700">Precio de Venta ($ CLP)</label>
+                  <input
+                    type="number"
+                    placeholder="Ej: 18500"
+                    value={prodPrice || ""}
+                    onChange={(e) => setProdPrice(Number(e.target.value))}
+                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-700">Descripción / Ingredientes</label>
+                <textarea
+                  placeholder="Ej: Jugoso corte de lomo liso de 350g, asado a las brasas con sal de mar..."
+                  value={prodDescription}
+                  onChange={(e) => setProdDescription(e.target.value)}
+                  rows={2}
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-zinc-700">URL de Imagen (Opcional)</label>
+                <input
+                  type="text"
+                  placeholder="https://ejemplo.com/foto.jpg"
+                  value={prodImageUrl}
+                  onChange={(e) => setProdImageUrl(e.target.value)}
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-955 font-mono text-zinc-950"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-700 block">Alérgenos</label>
+                <div className="flex flex-wrap gap-2">
+                  {["Gluten", "Lácteos", "Mariscos", "Huevo", "Soya", "Maní", "Frutos Secos"].map((alg) => {
+                    const active = prodAllergens.includes(alg);
+                    return (
+                      <button
+                        key={alg}
+                        type="button"
+                        onClick={() => toggleAllergen(alg)}
+                        className={`px-3 py-1.5 rounded-full text-[10px] font-bold border transition-all cursor-pointer ${
+                          active
+                            ? "bg-amber-500 border-amber-600 text-zinc-950 shadow-sm"
+                            : "bg-zinc-50 border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+                        }`}
+                      >
+                        ⚠️ {alg}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-zinc-100 bg-zinc-50 flex gap-2">
+              <button
+                onClick={() => setIsProductModalOpen(false)}
+                className="flex-1 py-3 text-zinc-500 hover:text-zinc-700 font-bold text-xs cursor-pointer text-center"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleSaveProduct}
+                disabled={isProductSaving}
+                className="flex-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-extrabold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {isProductSaving ? "Guardando..." : "Guardar Plato"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -38,11 +38,11 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
       
       if (res.ok) {
         const user = (await res.json()) as User;
-        if (user.role === "ADMIN") {
+        if (user.role === "ADMIN" || (user.permissions && user.permissions.length > 0)) {
           onLoginSuccess(user);
         } else {
-          setLoginError("Acceso denegado. Este PIN no corresponde a un Administrador.");
-          onLoginError("Not an admin user");
+          setLoginError("Acceso denegado. No tienes permisos para ingresar a este panel.");
+          onLoginError("No admin permissions");
           setPinInput("");
         }
       } else {
