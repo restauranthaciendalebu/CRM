@@ -309,6 +309,11 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
   const currentOrder = state.orders.find(o => o.tableId === activeTableId && o.status !== OrderStatus.CLOSED);
   const activeTable = state.tables.find(t => t.id === activeTableId);
 
+  // All active (non-closed) orders for this table — for accumulated total
+  const allActiveTableOrders = state.orders.filter(
+    (o) => o.tableId === activeTableId && o.status !== OrderStatus.CLOSED
+  );
+
   // Helper categories
   const categories = state.categories;
   const products = state.products;
@@ -509,6 +514,16 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
     const modifierPrice = item.modifiers.reduce((sum, m) => sum + m.extraPrice, 0);
     return acc + ((item.product.price + modifierPrice) * item.quantity);
   }, 0);
+
+  // Accumulated total from previous orders at this table
+  const previousOrdersTotal = allActiveTableOrders.reduce((acc, order) => {
+    return acc + order.items.reduce((sum, item) => {
+      const product = state.products.find(p => p.id === item.productId);
+      const modPrice = item.selectedModifiers?.reduce((ms, m) => ms + m.extraPrice, 0) || 0;
+      return sum + ((product?.price || 0) + modPrice) * item.quantity;
+    }, 0);
+  }, 0);
+  const grandTotal = previousOrdersTotal + cartTotal;
 
   const formatPrice = (price: number) => {
     return "$" + price.toLocaleString("es-CL");
@@ -1123,7 +1138,27 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                       </div>
                     )}
                     <h3 className="font-serif text-2xl font-black text-stone-900 leading-tight">{p.name}</h3>
-                    <p className="font-extrabold text-xl mt-1.5 text-amber-600">{formatPrice(p.price)}</p>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <p className="font-extrabold text-xl text-amber-600">{formatPrice(p.price)}</p>
+                      {/* Quantity selector — right next to price */}
+                      {!state.onlyViewMenuQr && (
+                        <div className="flex items-center gap-3 bg-stone-100 p-1.5 rounded-xl border border-stone-200">
+                          <button
+                            onClick={() => setModalQuantity(q => Math.max(1, q - 1))}
+                            className="bg-white text-stone-700 p-1 rounded-lg hover:bg-stone-200 cursor-pointer"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+                          <span className="font-extrabold text-sm text-stone-900 px-2">{modalQuantity}</span>
+                          <button
+                            onClick={() => setModalQuantity(q => q + 1)}
+                            className="bg-white text-stone-700 p-1 rounded-lg hover:bg-stone-200 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <p className="text-stone-600 text-xs mt-3 leading-relaxed border-l-2 border-amber-500/40 pl-3 italic">
                       "{p.description}"
                     </p>
@@ -1226,27 +1261,7 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                     </div>
                   )}
 
-                  {/* Quantity */}
-                  {!state.onlyViewMenuQr && (
-                    <div className="border-t border-stone-100 pt-4 flex items-center justify-between">
-                      <span className="text-stone-900 font-bold text-xs uppercase tracking-wide">{t.quantity}</span>
-                      <div className="flex items-center gap-3 bg-stone-100 p-1.5 rounded-xl border border-stone-200">
-                        <button
-                          onClick={() => setModalQuantity(q => Math.max(1, q - 1))}
-                          className="bg-white text-stone-700 p-1 rounded-lg hover:bg-stone-200 cursor-pointer"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="font-extrabold text-sm text-stone-900 px-2">{modalQuantity}</span>
-                        <button
-                          onClick={() => setModalQuantity(q => q + 1)}
-                          className="bg-white text-stone-700 p-1 rounded-lg hover:bg-stone-200 cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
+
                 </div>
 
                 {/* Actions Footer */}
@@ -1433,10 +1448,29 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
 
               {/* Actions Footer */}
               <div className="p-4 border-t border-zinc-100 bg-zinc-50 flex flex-col gap-2.5 flex-shrink-0">
-                <div className="flex justify-between items-center px-1">
-                  <span className="text-zinc-500 font-bold text-xs">Total del Pedido</span>
-                  <span className="text-zinc-900 font-black text-lg">{formatPrice(cartTotal)}</span>
-                </div>
+                {/* Previous orders accumulated total */}
+                {previousOrdersTotal > 0 && (
+                  <div className="bg-amber-50 border border-amber-200/50 rounded-xl p-3 space-y-1">
+                    <div className="flex justify-between items-center">
+                      <span className="text-zinc-500 text-[10px] font-bold uppercase">Pedidos anteriores</span>
+                      <span className="text-zinc-700 font-bold text-xs">{formatPrice(previousOrdersTotal)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-zinc-500 text-[10px] font-bold uppercase">Pedido nuevo</span>
+                      <span className="text-zinc-700 font-bold text-xs">{formatPrice(cartTotal)}</span>
+                    </div>
+                    <div className="border-t border-amber-300/50 pt-1 flex justify-between items-center">
+                      <span className="text-zinc-900 font-black text-xs">Total acumulado mesa</span>
+                      <span className="text-zinc-900 font-black text-lg">{formatPrice(grandTotal)}</span>
+                    </div>
+                  </div>
+                )}
+                {previousOrdersTotal === 0 && (
+                  <div className="flex justify-between items-center px-1">
+                    <span className="text-zinc-500 font-bold text-xs">Total del Pedido</span>
+                    <span className="text-zinc-900 font-black text-lg">{formatPrice(cartTotal)}</span>
+                  </div>
+                )}
                 
                 <button
                   onClick={handleSendOrder}

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { RestaurantState, Product, Category } from "../types";
+import { RestaurantState, Product, Category, OrderStatus } from "../types";
 import {
   Bell,
   Receipt,
@@ -34,9 +34,8 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
 
   // Notice state
   const [notice, setNotice] = useState<{ msg: string; kind: NoticeKind } | null>(null);
-  const [waiterCooldown, setWaiterCooldown] = useState(false);
-  const [billCooldown, setBillCooldown] = useState(false);
   const [billRequested, setBillRequested] = useState(false);
+  const [waiterJustCalled, setWaiterJustCalled] = useState(false);
 
   const showNotice = (msg: string, kind: NoticeKind = "info") => {
     setNotice({ msg, kind });
@@ -45,6 +44,25 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
 
   // Find table
   const activeTable = state.tables.find((t) => t.number === tableNumber);
+  const activeTableId = activeTable?.id;
+
+  // Derived state: check if there are delivered orders at this table
+  const tableOrders = state.orders.filter((o) => o.tableId === activeTableId);
+  const hasDeliveredOrder = tableOrders.some(
+    (o) => o.status === OrderStatus.DELIVERED || o.status === OrderStatus.CLOSED
+  );
+
+  // Derived state: check if there's a pending (unresolved) CALL_WAITER notification for this table
+  const hasPendingWaiterCall = state.notifications.some(
+    (n) => n.tableNumber === tableNumber && n.type === "CALL_WAITER" && !n.resolved
+  );
+  const waiterCooldown = hasPendingWaiterCall || waiterJustCalled;
+
+  // Derived state: check if there's a pending REQUEST_BILL notification for this table
+  const hasPendingBillRequest = state.notifications.some(
+    (n) => n.tableNumber === tableNumber && n.type === "REQUEST_BILL" && !n.resolved
+  );
+  const billDisabled = !hasDeliveredOrder || billRequested || hasPendingBillRequest;
 
   // Filter products
   const filteredProducts = state.products.filter((p) => {
@@ -71,7 +89,7 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
   /* ─── Actions ─── */
   const handleCallWaiter = async () => {
     if (!activeTable || waiterCooldown) return;
-    setWaiterCooldown(true);
+    setWaiterJustCalled(true);
     try {
       const res = await fetch("/api/notifications/call", {
         method: "POST",
@@ -83,13 +101,12 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
       }
     } catch {
       showNotice("Error de conexión. Intenta de nuevo.", "error");
+      setWaiterJustCalled(false);
     }
-    setTimeout(() => setWaiterCooldown(false), 15000); // 15s cooldown
   };
 
   const handleRequestBill = async () => {
-    if (!activeTable || billCooldown) return;
-    setBillCooldown(true);
+    if (!activeTable || billDisabled) return;
     try {
       const res = await fetch("/api/notifications/call", {
         method: "POST",
@@ -104,7 +121,6 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
     } catch {
       showNotice("Error de conexión. Intenta de nuevo.", "error");
     }
-    setTimeout(() => setBillCooldown(false), 30000); // 30s cooldown
   };
 
   /* ─── PDF / Print Download (mobile-friendly) ─── */
@@ -429,22 +445,26 @@ ${menuHTML}
             }`}
           >
             <Bell className={`w-4 h-4 ${!waiterCooldown ? "animate-bounce" : ""}`} />
-            {waiterCooldown ? "Garzón notificado ✓" : "Llamar Garzón"}
+            {waiterCooldown ? "Garzón en camino ✓" : "Llamar Garzón"}
           </button>
 
           <button
             onClick={handleRequestBill}
-            disabled={billCooldown || billRequested}
+            disabled={billDisabled}
             className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm transition-all cursor-pointer ${
-              billRequested
+              billRequested || hasPendingBillRequest
                 ? "bg-emerald-900/50 text-emerald-400 border border-emerald-500/20"
-                : billCooldown
-                ? "bg-zinc-800 text-zinc-600"
+                : !hasDeliveredOrder
+                ? "bg-zinc-800/50 text-zinc-700 border border-zinc-800"
                 : "bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700/50 active:scale-[0.97]"
             }`}
           >
             <Receipt className="w-4 h-4" />
-            {billRequested ? "Cuenta solicitada ✓" : "Pedir Cuenta"}
+            {billRequested || hasPendingBillRequest
+              ? "Cuenta solicitada ✓"
+              : !hasDeliveredOrder
+              ? "Sin pedidos aún"
+              : "Pedir Cuenta"}
           </button>
         </div>
 

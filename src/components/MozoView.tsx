@@ -28,9 +28,11 @@ import {
   Search, 
   Utensils, 
   Percent, 
-  Users 
+  Users,
+  Printer
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { printThermalReceipt } from "./ThermalReceipt";
 
 interface MozoViewProps {
   state: RestaurantState;
@@ -90,13 +92,10 @@ export default function MozoView({
   // Error/Success banner
   const [bannerMsg, setBannerMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
-  useEffect(() => {
-    // Poll the server state every 3 seconds
-    const interval = setInterval(() => {
-      onRefreshState();
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [onRefreshState]);
+
+  // State is updated in real-time via Firestore onSnapshot in App.tsx
+  // No polling needed — props update automatically when Firestore data changes
+
 
   const showBanner = (text: string, type: "success" | "error" = "success") => {
     setBannerMsg({ text, type });
@@ -375,6 +374,15 @@ export default function MozoView({
 
       if (res.ok) {
         setBillingSuccess(true);
+        // Auto-print the receipt
+        if (activeOrder) {
+          printThermalReceipt({
+            order: activeOrder,
+            state,
+            payments: paymentsPayload,
+            waiterName: activeUser?.name,
+          });
+        }
         setTimeout(() => {
           setIsBillingOpen(false);
           setSelectedTable(null);
@@ -383,7 +391,7 @@ export default function MozoView({
           setSelectedPromoCode("");
           setTipPercent(10);
           onRefreshState();
-        }, 2000);
+        }, 5000); // Extended to 5s so user can see success + receipt prints
       }
     } catch (e) {
       showBanner("Error de conexión al cerrar la boleta", "error");
@@ -1082,7 +1090,7 @@ export default function MozoView({
               {/* Body */}
               <div className="p-5 overflow-y-auto space-y-4 flex-1">
                 {billingSuccess ? (
-                  <div className="py-12 text-center space-y-3">
+                  <div className="py-10 text-center space-y-4">
                     <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto">
                       <CheckCircle2 className="w-10 h-10 animate-bounce" />
                     </div>
@@ -1090,6 +1098,27 @@ export default function MozoView({
                       <h4 className="font-extrabold text-zinc-950 text-base">¡Pago Procesado de Forma Exitosa!</h4>
                       <p className="text-zinc-400 text-xs mt-1">La mesa ha sido liberada y los puntos de fidelización fueron cargados.</p>
                     </div>
+                    {activeOrder && (
+                      <button
+                        onClick={() =>
+                          printThermalReceipt({
+                            order: activeOrder,
+                            state,
+                            payments: [{
+                              amount: calculateActiveOrderTotal(),
+                              method: paymentMethod,
+                              tip: calculateActiveOrderTotal() * (tipPercent / 100),
+                              discount: calculateActiveOrderTotal() * (appliedDiscount / 100),
+                            }],
+                            waiterName: activeUser?.name,
+                          })
+                        }
+                        className="inline-flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs py-3 px-6 rounded-xl transition-all cursor-pointer mx-auto"
+                      >
+                        <Printer className="w-4 h-4" />
+                        Reimprimir Boleta
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <>
