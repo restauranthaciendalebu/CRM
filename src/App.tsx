@@ -6,14 +6,28 @@ import MozoView from "./components/MozoView";
 import KitchenKDS from "./components/KitchenKDS";
 import AdminView from "./components/AdminView";
 import AdminLogin from "./components/AdminLogin";
+import CustomerQRView from "./components/CustomerQRView";
 import ThemeCarousel from "./components/ThemeCarousel";
 import { themes } from "./theme";
 import { subscribeToState } from "./dbClient";
+
+/* ─── Detect ?mesa=X from QR scan ─── */
+function getQRTableNumber(): number | null {
+  const params = new URLSearchParams(window.location.search);
+  const mesa = params.get("mesa");
+  if (mesa && !isNaN(Number(mesa))) {
+    return Number(mesa);
+  }
+  return null;
+}
 
 export default function App() {
   const [currentRole, setCurrentRole] = useState<"client" | "waiter" | "kitchen" | "admin">("client");
   const [clientTableId, setClientTableId] = useState("t5");
   const [activeUser, setActiveUser] = useState<User | null>(null);
+
+  // QR mode detection
+  const [qrTableNumber] = useState<number | null>(() => getQRTableNumber());
 
   // Theme state
   const [themeId, setThemeId] = useState<string>(() => {
@@ -58,7 +72,7 @@ export default function App() {
     // Subscribe to real-time updates from Firebase Firestore
     const unsubscribe = subscribeToState((newState) => {
       setState(newState);
-      setIsDemoMode(false); // Sincronizado con Firebase Firestore
+      setIsDemoMode(false);
       setIsLoading(false);
     });
 
@@ -80,6 +94,18 @@ export default function App() {
 
   if (!state) return null;
 
+  /* ─── QR MODE: Clean customer-only view ─── */
+  if (qrTableNumber !== null) {
+    return (
+      <CustomerQRView
+        state={state}
+        tableNumber={qrTableNumber}
+        onRefreshState={fetchState}
+      />
+    );
+  }
+
+  /* ─── FULL MODE: Internal staff interface ─── */
   return (
     <div className="min-h-screen bg-zinc-100 flex flex-col" id="restaurant-hacienda-app-root">
       {/* Demo mode banner */}
