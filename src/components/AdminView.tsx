@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import QRGenerator from "./QRGenerator";
 import { 
   RestaurantState, 
   Product, 
@@ -42,7 +43,7 @@ interface AdminViewProps {
 }
 
 export default function AdminView({ state, onRefreshState }: AdminViewProps) {
-  const [activeTab, setActiveTab] = useState<"reports" | "boletas" | "menu" | "crm" | "inventory" | "audits">("reports");
+  const [activeTab, setActiveTab] = useState<"reports" | "boletas" | "menu" | "crm" | "inventory" | "qr" | "audits">("reports");
   
   // Inventory actions
   const [addingStockIngId, setAddingStockIngId] = useState<string | null>(null);
@@ -190,6 +191,7 @@ export default function AdminView({ state, onRefreshState }: AdminViewProps) {
           { id: "menu", name: "🍔 Carta & Precios" },
           { id: "crm", name: "👥 CRM & Fidelidad" },
           { id: "inventory", name: "📦 Inventario" },
+          { id: "qr", name: "📱 QR Mesas" },
           { id: "audits", name: "🛡️ Auditoría & Backups" },
         ].map((tab) => (
           <button
@@ -984,6 +986,11 @@ export default function AdminView({ state, onRefreshState }: AdminViewProps) {
               </div>
             </div>
           </div>
+        )}
+
+        {/* TAB 7: QR CODES */}
+        {activeTab === "qr" && (
+          <QRGenerator tables={state.tables} restaurantName="Restaurant Hacienda" />
         )}
 
       </div>
