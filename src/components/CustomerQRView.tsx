@@ -107,14 +107,8 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
     setTimeout(() => setBillCooldown(false), 30000); // 30s cooldown
   };
 
-  /* ─── PDF Download ─── */
+  /* ─── PDF / Print Download (mobile-friendly) ─── */
   const handleDownloadPDF = () => {
-    const printWindow = window.open("", "_blank", "width=800,height=1000");
-    if (!printWindow) {
-      showNotice("No se pudo abrir la ventana de descarga. Permite ventanas emergentes.", "error");
-      return;
-    }
-
     const menuHTML = state.categories
       .map((cat) => {
         const prods = state.products.filter((p) => p.categoryId === cat.id && p.isAvailable);
@@ -139,41 +133,55 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
       })
       .join("");
 
-    printWindow.document.write(`
-      <!DOCTYPE html>
-      <html><head>
-        <title>Carta - Restaurant Hacienda</title>
-        <style>
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
-          * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { font-family: 'Inter', sans-serif; padding: 40px; max-width: 700px; margin: 0 auto; color: #18181b; }
-          .header { text-align: center; margin-bottom: 32px; border-bottom: 2px solid #f59e0b; padding-bottom: 24px; }
-          .header h1 { font-size: 28px; font-weight: 900; letter-spacing: -0.5px; }
-          .header p { color: #71717a; font-size: 13px; margin-top: 4px; }
-          .category { margin-bottom: 28px; }
-          .category h2 { font-size: 16px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #92400e; border-bottom: 1px solid #e4e4e7; padding-bottom: 6px; margin-bottom: 12px; }
-          .item { padding: 8px 0; border-bottom: 1px dotted #e4e4e7; }
-          .item-header { display: flex; justify-content: space-between; align-items: baseline; }
-          .item-name { font-weight: 700; font-size: 14px; }
-          .item-price { font-weight: 800; font-size: 14px; color: #92400e; white-space: nowrap; }
-          .item-desc { font-size: 11px; color: #71717a; margin-top: 2px; line-height: 1.4; }
-          .item-allergens { font-size: 10px; color: #a1a1aa; margin-top: 2px; }
-          .footer { text-align: center; margin-top: 32px; padding-top: 16px; border-top: 1px solid #e4e4e7; color: #a1a1aa; font-size: 10px; }
-          @media print { body { padding: 20px; } }
-        </style>
-      </head><body>
-        <div class="header">
-          <h1>🏠 Restaurant Hacienda</h1>
-          <p>Tradición & Alta Parrilla — Carta Digital</p>
-        </div>
-        ${menuHTML}
-        <div class="footer">
-          <p>Restaurant Hacienda · Carta Digital · restauranthaciendalebu.github.io/CRM</p>
-        </div>
-        <script>window.onload = () => { window.print(); }<\/script>
-      </body></html>
-    `);
-    printWindow.document.close();
+    const fullHTML = `<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Carta - Restaurant Hacienda</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', sans-serif; padding: 32px 24px; max-width: 700px; margin: 0 auto; color: #18181b; }
+  .header { text-align: center; margin-bottom: 32px; border-bottom: 2px solid #f59e0b; padding-bottom: 24px; }
+  .header h1 { font-size: 26px; font-weight: 900; letter-spacing: -0.5px; }
+  .header p { color: #71717a; font-size: 12px; margin-top: 4px; }
+  .category { margin-bottom: 24px; }
+  .category h2 { font-size: 15px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #92400e; border-bottom: 1px solid #e4e4e7; padding-bottom: 6px; margin-bottom: 10px; }
+  .item { padding: 7px 0; border-bottom: 1px dotted #e4e4e7; }
+  .item-header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .item-name { font-weight: 700; font-size: 13px; }
+  .item-price { font-weight: 800; font-size: 13px; color: #92400e; white-space: nowrap; }
+  .item-desc { font-size: 11px; color: #71717a; margin-top: 2px; line-height: 1.4; }
+  .item-allergens { font-size: 10px; color: #a1a1aa; margin-top: 2px; }
+  .footer { text-align: center; margin-top: 28px; padding-top: 14px; border-top: 1px solid #e4e4e7; color: #a1a1aa; font-size: 9px; }
+  .print-btn { display: block; margin: 20px auto 0; background: #18181b; color: white; border: none; padding: 12px 28px; border-radius: 12px; font-weight: 700; font-size: 14px; cursor: pointer; font-family: inherit; }
+  .print-btn:active { opacity: 0.8; }
+  @media print { .print-btn { display: none !important; } body { padding: 16px; } }
+</style>
+</head><body>
+<div class="header">
+  <h1>🏠 Restaurant Hacienda</h1>
+  <p>Tradición & Alta Parrilla — Carta Digital</p>
+</div>
+${menuHTML}
+<div class="footer">
+  <p>Restaurant Hacienda · Carta Digital</p>
+</div>
+<button class="print-btn" onclick="window.print()">🖨️ Imprimir / Guardar PDF</button>
+</body></html>`;
+
+    // Create Blob and open as a new page (works on mobile)
+    const blob = new Blob([fullHTML], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.target = "_blank";
+    link.rel = "noopener";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    showNotice("📄 Carta abierta. Usa 'Guardar como PDF' o 'Imprimir' desde tu navegador.", "info");
   };
 
   /* ─── Scroll tracking ─── */
@@ -212,35 +220,47 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
         </div>
       )}
 
-      {/* ── Hero Header ── */}
-      <header className="relative bg-gradient-to-b from-zinc-900 via-zinc-950 to-zinc-950 px-5 pt-10 pb-8 text-center">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(245,158,11,0.08),transparent_70%)]" />
+      {/* ── Hero Header with background image ── */}
+      <header className="relative overflow-hidden px-5 pt-12 pb-10 text-center">
+        {/* Background image */}
+        <div className="absolute inset-0 z-0">
+          <img
+            src="https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=800&q=70"
+            alt=""
+            className="w-full h-full object-cover"
+          />
+          {/* Dark overlay gradient */}
+          <div className="absolute inset-0 bg-gradient-to-b from-zinc-950/80 via-zinc-950/85 to-zinc-950" />
+          {/* Warm amber glow */}
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(245,158,11,0.12),transparent_60%)]" />
+        </div>
+
         <div className="relative z-10">
-          <span className="text-amber-500/80 text-[10px] uppercase tracking-[4px] font-black block">
+          <span className="text-amber-500/90 text-[10px] uppercase tracking-[4px] font-black block">
             Carta Digital
           </span>
-          <h1 className="text-3xl font-black mt-2 tracking-tight">
+          <h1 className="text-3xl font-black mt-2 tracking-tight text-white drop-shadow-lg">
             🏠 Hacienda
           </h1>
-          <p className="text-zinc-500 text-xs mt-1 italic max-w-xs mx-auto leading-relaxed">
+          <p className="text-zinc-400 text-xs mt-2 italic max-w-xs mx-auto leading-relaxed">
             "Fuegos de la tradición campera, cortes premium madurados y los más selectos ingredientes de nuestra tierra chilena."
           </p>
           {activeTable && (
-            <div className="mt-4 inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/20 rounded-full px-4 py-1.5">
+            <div className="mt-4 inline-flex items-center gap-2 bg-black/30 backdrop-blur-sm border border-amber-500/25 rounded-full px-4 py-1.5">
               <UtensilsCrossed className="w-3.5 h-3.5 text-amber-500" />
               <span className="text-amber-400 text-xs font-bold">Mesa {tableNumber}</span>
-              <span className="text-zinc-600 text-[10px]">· {activeTable.zone}</span>
+              <span className="text-zinc-500 text-[10px]">· {activeTable.zone}</span>
             </div>
           )}
-        </div>
 
-        {/* Download PDF button */}
-        <button
-          onClick={handleDownloadPDF}
-          className="mt-5 inline-flex items-center gap-1.5 bg-zinc-800/80 hover:bg-zinc-700 border border-zinc-700/50 text-zinc-300 text-xs font-bold py-2 px-4 rounded-full transition-all cursor-pointer"
-        >
-          <Download className="w-3.5 h-3.5" /> Descargar Carta PDF
-        </button>
+          {/* Download PDF button */}
+          <button
+            onClick={handleDownloadPDF}
+            className="mt-5 inline-flex items-center gap-1.5 bg-white/10 backdrop-blur-sm hover:bg-white/20 border border-white/15 text-white text-xs font-bold py-2.5 px-5 rounded-full transition-all cursor-pointer"
+          >
+            <Download className="w-3.5 h-3.5" /> Descargar Carta PDF
+          </button>
+        </div>
       </header>
 
       {/* ── Category pills ── */}
