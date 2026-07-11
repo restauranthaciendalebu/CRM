@@ -7,7 +7,9 @@ import { handleLocalApiRequest } from './dbClient.ts';
 // Intercept fetch calls globally to redirect /api/* to Firebase Firestore
 const originalFetch = window.fetch;
 window.fetch = async (input, init) => {
-  const url = typeof input === 'string' ? input : input.url;
+  const url = typeof input === 'string' 
+    ? input 
+    : (input instanceof Request ? input.url : input.toString());
   if (url.includes('/api/')) {
     return await handleLocalApiRequest(url, init);
   }

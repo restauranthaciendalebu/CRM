@@ -1,13 +1,14 @@
 import React, { useState } from "react";
-import { User } from "../types";
-import { ShieldCheck, Lock } from "lucide-react";
+import { User, RestaurantState } from "../types";
+import { Utensils, Lock, Delete } from "lucide-react";
+import { motion } from "motion/react";
 
-interface AdminLoginProps {
+interface LoginViewProps {
   onLoginSuccess: (user: User) => void;
-  onLoginError: (error: string) => void;
+  state: RestaurantState;
 }
 
-export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginProps) {
+export default function LoginView({ onLoginSuccess, state }: LoginViewProps) {
   const [pinInput, setPinInput] = useState("");
   const [loginError, setLoginError] = useState("");
   const [isValidating, setIsValidating] = useState(false);
@@ -17,43 +18,35 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
       const nextPin = pinInput + num;
       setPinInput(nextPin);
       if (nextPin.length === 4) {
-        validateAdminPin(nextPin);
+        validatePin(nextPin);
       }
     }
   };
 
   const handlePinBackspace = () => {
-    setPinInput(prev => prev.slice(0, -1));
+    setPinInput((prev) => prev.slice(0, -1));
   };
 
-  const validateAdminPin = async (pin: string) => {
+  const validatePin = async (pin: string) => {
     setIsValidating(true);
     setLoginError("");
     try {
       const res = await fetch("/api/auth/pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin })
+        body: JSON.stringify({ pin }),
       });
-      
+
       if (res.ok) {
         const user = (await res.json()) as User;
-        if (user.role === "ADMIN" || (user.permissions && user.permissions.length > 0)) {
-          onLoginSuccess(user);
-        } else {
-          setLoginError("Acceso denegado. No tienes permisos para ingresar a este panel.");
-          onLoginError("No admin permissions");
-          setPinInput("");
-        }
+        onLoginSuccess(user);
       } else {
         const err = await res.json();
         setLoginError(err.error || "PIN inválido");
-        onLoginError("Invalid PIN credentials");
         setPinInput("");
       }
     } catch (e) {
       setLoginError("Error de conexión con el servidor");
-      onLoginError("Network connection error");
       setPinInput("");
     } finally {
       setIsValidating(false);
@@ -61,13 +54,20 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
   };
 
   return (
-    <div className="bg-zinc-950 min-h-[85vh] flex flex-col items-center justify-center p-6 text-white" id="admin-login-view">
-      <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl flex flex-col items-center">
-        <span className="text-amber-500 font-bold tracking-widest text-xs uppercase block text-center">Control Panel</span>
+    <div className="bg-zinc-950 min-h-screen flex flex-col items-center justify-center p-6 text-white" id="main-login-view">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.3 }}
+        className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl flex flex-col items-center"
+      >
+        <span className="text-amber-500 font-bold tracking-widest text-xs uppercase block text-center">Acceso de Personal</span>
         <h2 className="text-2xl font-black mt-2 text-zinc-100 flex items-center gap-1.5 font-sans">
-          <ShieldCheck className="w-6 h-6 text-amber-500" /> Admin CRM Hacienda
+          <Utensils className="w-6 h-6 text-amber-500" /> Restaurant Hacienda
         </h2>
-        <p className="text-zinc-500 text-xs text-center mt-1">Ingresa tu código PIN de administrador para acceder a las métricas e inventario.</p>
+        <p className="text-zinc-500 text-xs text-center mt-2">
+          Ingresa tu PIN de 4 dígitos para acceder al sistema.
+        </p>
 
         {/* PIN circles indicator */}
         <div className="flex gap-4 my-8">
@@ -75,8 +75,8 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
             <div
               key={idx}
               className={`w-4 h-4 rounded-full border-2 transition-all ${
-                pinInput.length > idx 
-                  ? "bg-amber-500 border-amber-500 scale-110 shadow-lg shadow-amber-500/20" 
+                pinInput.length > idx
+                  ? "bg-amber-500 border-amber-500 scale-110 shadow-lg shadow-amber-500/20"
                   : "border-zinc-700"
               }`}
             />
@@ -104,7 +104,7 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
           <button
             onClick={handlePinBackspace}
             disabled={isValidating}
-            className="w-16 h-16 rounded-full bg-zinc-800/40 hover:bg-zinc-700 text-xs font-bold flex items-center justify-center transition-all active:scale-90 cursor-pointer disabled:opacity-55"
+            className="w-16 h-16 rounded-full bg-zinc-800/40 hover:bg-zinc-700 text-xs font-bold flex items-center justify-center transition-all active:scale-90 cursor-pointer disabled:opacity-55 flex items-center justify-center"
           >
             Borrar
           </button>
@@ -121,10 +121,10 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
         </div>
 
         <div className="text-zinc-600 text-[10px] text-center mt-6">
-          PIN Administrador por defecto: <br />
-          <strong>1234</strong>
+          PINs por defecto: <br />
+          <strong>2222</strong> (Juan - Mozo) | <strong>3333</strong> (Carlos - Cocina) | <strong>1234</strong> (Don Ricardo - Admin)
         </div>
-      </div>
+      </motion.div>
     </div>
   );
 }

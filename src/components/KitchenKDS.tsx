@@ -13,15 +13,17 @@ import {
   ChefHat, 
   Wine, 
   UtensilsCrossed, 
-  RefreshCw 
+  RefreshCw,
+  LogOut
 } from "lucide-react";
 
 interface KitchenKDSProps {
   state: RestaurantState;
   onRefreshState: () => void;
+  onLogout?: () => void;
 }
 
-export default function KitchenKDS({ state, onRefreshState }: KitchenKDSProps) {
+export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenKDSProps) {
   const [filterType, setFilterType] = useState<"all" | "cocina" | "bar">("all");
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -153,6 +155,15 @@ export default function KitchenKDS({ state, onRefreshState }: KitchenKDSProps) {
           >
             <RefreshCw className="w-4 h-4" />
           </button>
+
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="px-3.5 py-2.5 bg-red-950/40 border border-red-900/50 hover:bg-red-900 text-red-200 hover:text-white font-extrabold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition-all"
+            >
+              <LogOut className="w-3.5 h-3.5" /> Salir
+            </button>
+          )}
         </div>
       </div>
 

@@ -39,7 +39,8 @@ import {
   FileDown,
   Shield,
   Lock,
-  Key
+  Key,
+  X
 } from "lucide-react";
 
 interface AdminViewProps {

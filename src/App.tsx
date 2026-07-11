@@ -10,6 +10,7 @@ import CustomerQRView from "./components/CustomerQRView";
 import ThemeCarousel from "./components/ThemeCarousel";
 import { themes } from "./theme";
 import { subscribeToState } from "./dbClient";
+import LoginView from "./components/LoginView";
 
 /* ─── Detect ?mesa=X from QR scan ─── */
 function getQRTableNumber(): number | null {
@@ -79,8 +80,21 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  const handleLoginSuccess = (user: User) => { setActiveUser(user); };
-  const handleLogout = () => { setActiveUser(null); };
+  const handleLoginSuccess = (user: User) => {
+    setActiveUser(user);
+    if (user.role === "WAITER") {
+      setCurrentRole("waiter");
+    } else if (user.role === "KITCHEN") {
+      setCurrentRole("kitchen");
+    } else if (user.role === "ADMIN") {
+      setCurrentRole("admin");
+    }
+  };
+
+  const handleLogout = () => {
+    setActiveUser(null);
+    setCurrentRole("client");
+  };
 
   if (isLoading) {
     return (
@@ -105,6 +119,16 @@ export default function App() {
     );
   }
 
+  /* ─── STAFF LOGIN SHIELD: Force login if not authenticated ─── */
+  if (!activeUser) {
+    return (
+      <LoginView
+        state={state}
+        onLoginSuccess={handleLoginSuccess}
+      />
+    );
+  }
+
   /* ─── FULL MODE: Internal staff interface ─── */
   return (
     <div className="min-h-screen bg-zinc-100 flex flex-col" id="restaurant-hacienda-app-root">
@@ -115,18 +139,20 @@ export default function App() {
         </div>
       )}
 
-      {/* Simulation switcher top header */}
-      <RoleSelector
-        currentRole={currentRole}
-        onChangeRole={setCurrentRole}
-        activeTableIdForClient={clientTableId}
-        onChangeClientTable={setClientTableId}
-        tables={state.tables}
-        activeUser={activeUser}
-        onLogout={handleLogout}
-        showThemeExplorer={showThemeExplorer}
-        onToggleThemeExplorer={() => setShowThemeExplorer((prev) => !prev)}
-      />
+      {/* Simulation switcher top header - ONLY visible to ADMIN users */}
+      {activeUser.role === "ADMIN" && (
+        <RoleSelector
+          currentRole={currentRole}
+          onChangeRole={setCurrentRole}
+          activeTableIdForClient={clientTableId}
+          onChangeClientTable={setClientTableId}
+          tables={state.tables}
+          activeUser={activeUser}
+          onLogout={handleLogout}
+          showThemeExplorer={showThemeExplorer}
+          onToggleThemeExplorer={() => setShowThemeExplorer((prev) => !prev)}
+        />
+      )}
 
       {/* Dynamic Theme Carousel Panel */}
       {showThemeExplorer && (
@@ -163,6 +189,7 @@ export default function App() {
           <KitchenKDS
             state={state}
             onRefreshState={fetchState}
+            onLogout={handleLogout}
           />
         )}
 

@@ -59,8 +59,8 @@ export function printThermalReceipt({ order, state, payments, waiterName }: Ther
   const paymentMethodLabel = (method: PaymentMethod) => {
     const labels: Record<PaymentMethod, string> = {
       [PaymentMethod.CASH]: "Efectivo",
-      [PaymentMethod.CREDIT_CARD]: "T. Crédito",
-      [PaymentMethod.DEBIT_CARD]: "T. Débito",
+      [PaymentMethod.CREDIT]: "T. Crédito",
+      [PaymentMethod.DEBIT]: "T. Débito",
       [PaymentMethod.TRANSFER]: "Transferencia",
     };
     return labels[method] || method;
