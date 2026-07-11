@@ -315,15 +315,18 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           createdOrder = newOrder;
         }
 
-        const tableNum = table ? table.number : 0;
-        s.notifications.push({
-          id: "nt_" + Math.random().toString(36).substring(2, 11),
-          tableNumber: tableNum,
-          type: "NEW_ORDER",
-          createdAt: new Date().toISOString(),
-          resolved: false,
-          notes: `Nuevo pedido mesa ${tableNum}`
-        });
+        // Only notify for QR/customer orders, not when waiter adds items directly
+        if (!isWaiter) {
+          const tableNum = table ? table.number : 0;
+          s.notifications.push({
+            id: "nt_" + Math.random().toString(36).substring(2, 11),
+            tableNumber: tableNum,
+            type: "NEW_ORDER",
+            createdAt: new Date().toISOString(),
+            resolved: false,
+            notes: `Nuevo pedido mesa ${tableNum}`
+          });
+        }
       });
 
       return createResponse({ success: true, order: createdOrder });
