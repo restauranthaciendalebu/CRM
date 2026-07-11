@@ -519,7 +519,7 @@ export default function MozoView({
   const currentZoneTables = state.tables.filter(t => t.zone === selectedZone);
   const zones = ["Salón Principal", "Terraza", "VIP"];
 
-  const pendingNotifications = state.notifications || [];
+  const pendingNotifications = (state.notifications || []).filter(n => !n.resolved);
 
   return (
     <div className="bg-zinc-100 min-h-screen text-zinc-800 flex flex-col md:flex-row" id="mozo-main-layout">
