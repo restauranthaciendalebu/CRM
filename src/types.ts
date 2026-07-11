@@ -96,6 +96,7 @@ export interface Product {
   allergens: string[]; // e.g. ["Gluten", "Lácteos"]
   isAvailable: boolean;
   recipe: RecipeItem[]; // list of ingredients required to make this
+  requiresKitchen?: boolean; // false = served directly (e.g. bottled wine, water). Default: true
 }
 
 export interface Ingredient {

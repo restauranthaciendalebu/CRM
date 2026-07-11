@@ -269,6 +269,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           table.status = TableStatus.OCCUPIED;
         }
 
+        const isWaiter = body.isWaiter === true;
+
         let order = s.orders.find(o => o.tableId === tableId && o.status !== OrderStatus.CLOSED);
         if (order) {
           items.forEach((newItem: any) => {
@@ -296,8 +298,6 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             selectedModifiers: it.selectedModifiers || [],
             tanda: it.tanda || 1
           }));
-
-          const isWaiter = body.isWaiter === true;
 
           const newOrder: Order = {
             id: newOrderId,
@@ -348,7 +348,15 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         let updatedCount = 0;
         order.items.forEach(item => {
           if (item.status === OrderItemStatus.PENDING) {
-            item.status = OrderItemStatus.PREPARING;
+            // Check if product requires kitchen preparation
+            const product = s.products.find(p => p.id === item.productId);
+            if (product && product.requiresKitchen === false) {
+              // Beverages/items served directly → skip kitchen, mark as READY
+              item.status = OrderItemStatus.READY;
+            } else {
+              // Food/prepared items → send to kitchen
+              item.status = OrderItemStatus.PREPARING;
+            }
             updatedCount++;
           }
         });
@@ -387,7 +395,12 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           
           order.items.forEach(it => {
             if (it.status === OrderItemStatus.PENDING) {
-              it.status = OrderItemStatus.PREPARING;
+              const product = s.products.find(p => p.id === it.productId);
+              if (product && product.requiresKitchen === false) {
+                it.status = OrderItemStatus.READY;
+              } else {
+                it.status = OrderItemStatus.PREPARING;
+              }
             }
           });
           
