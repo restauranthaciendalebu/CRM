@@ -55,7 +55,7 @@ export default function MozoView({
   const [loginError, setLoginError] = useState("");
 
   // UI state
-  const [selectedZone, setSelectedZone] = useState("Salón Principal");
+  const [selectedZone, setSelectedZone] = useState("all");
   const [selectedTable, setSelectedTable] = useState<Table | null>(null);
   
   // Modals
@@ -95,6 +95,13 @@ export default function MozoView({
 
   // State is updated in real-time via Firestore onSnapshot in App.tsx
   // No polling needed — props update automatically when Firestore data changes
+
+  // Live clock for elapsed time on occupied tables
+  const [currentTime, setCurrentTime] = useState(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 30000); // Update every 30s
+    return () => clearInterval(timer);
+  }, []);
 
 
   const showBanner = (text: string, type: "success" | "error" = "success") => {
@@ -516,8 +523,19 @@ export default function MozoView({
   }
 
   // RENDER WAITER CONSOLE
-  const currentZoneTables = state.tables.filter(t => t.zone === selectedZone);
-  const zones = ["Salón Principal", "Terraza", "VIP"];
+  // Dynamic zones extracted from actual table data
+  const zones = Array.from(new Set(state.tables.map(t => t.zone))).sort();
+  const currentZoneTables = selectedZone === "all" 
+    ? state.tables 
+    : state.tables.filter(t => t.zone === selectedZone);
+
+  // Table status summary
+  const tableSummary = {
+    free: state.tables.filter(t => t.status === TableStatus.FREE).length,
+    occupied: state.tables.filter(t => t.status === TableStatus.OCCUPIED).length,
+    billRequested: state.tables.filter(t => t.status === TableStatus.BILL_REQUESTED).length,
+    reserved: state.tables.filter(t => t.status === TableStatus.RESERVED).length,
+  };
 
   const pendingNotifications = (state.notifications || []).filter(n => !n.resolved);
 
@@ -604,33 +622,84 @@ export default function MozoView({
           </div>
         )}
 
-        {/* ZONE SELECTOR */}
-        <div className="flex gap-1.5 mb-4 bg-zinc-200 p-1 rounded-xl w-max">
-          {zones.map((zone) => (
-            <button
-              key={zone}
-              onClick={() => setSelectedZone(zone)}
-              className={`px-4 py-2 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                selectedZone === zone 
-                  ? "bg-white text-zinc-950 shadow-sm" 
-                  : "text-zinc-600 hover:text-zinc-900"
-              }`}
-            >
-              {zone}
-            </button>
-          ))}
+        {/* STATUS SUMMARY BAR */}
+        <div className="flex flex-wrap gap-2 mb-4">
+          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-emerald-500" /> {tableSummary.free} Libres
+          </div>
+          <div className="bg-red-50 border border-red-200 text-red-800 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-red-500" /> {tableSummary.occupied} Ocupadas
+          </div>
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-amber-500" /> {tableSummary.billRequested} Piden Cuenta
+          </div>
+          <div className="bg-blue-50 border border-blue-200 text-blue-800 px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-blue-500" /> {tableSummary.reserved} Reservadas
+          </div>
+        </div>
+
+        {/* ZONE SELECTOR - Dynamic from DB */}
+        <div className="flex flex-wrap gap-1.5 mb-4 bg-zinc-200 p-1 rounded-xl w-max">
+          <button
+            onClick={() => setSelectedZone("all")}
+            className={`px-4 py-2 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+              selectedZone === "all" 
+                ? "bg-white text-zinc-950 shadow-sm" 
+                : "text-zinc-600 hover:text-zinc-900"
+            }`}
+          >
+            Todas ({state.tables.length})
+          </button>
+          {zones.map((zone) => {
+            const zoneCount = state.tables.filter(t => t.zone === zone).length;
+            return (
+              <button
+                key={zone}
+                onClick={() => setSelectedZone(zone)}
+                className={`px-4 py-2 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                  selectedZone === zone 
+                    ? "bg-white text-zinc-950 shadow-sm" 
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                {zone} ({zoneCount})
+              </button>
+            );
+          })}
         </div>
 
         {/* TABLES GRID (BENTO BOX MAP STYLE) */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4" id="mozo-table-grid">
-          {currentZoneTables.map((tbl) => {
+          {currentZoneTables.map((tbl, idx) => {
             const isSelected = selectedTable?.id === tbl.id;
             const tableOrder = state.orders.find(o => o.tableId === tbl.id && o.status !== OrderStatus.CLOSED);
+
+            // Calculate elapsed time for occupied tables
+            let elapsedText = "";
+            if (tableOrder && tbl.status === TableStatus.OCCUPIED) {
+              const diffMs = currentTime.getTime() - new Date(tableOrder.createdAt).getTime();
+              const diffMins = Math.floor(diffMs / 60000);
+              if (diffMins < 60) {
+                elapsedText = `${diffMins} min`;
+              } else {
+                const hrs = Math.floor(diffMins / 60);
+                const mins = diffMins % 60;
+                elapsedText = `${hrs}h ${mins}m`;
+              }
+            }
+
+            // Get waiter name for this table's order
+            const assignedWaiter = tableOrder?.waiterId 
+              ? state.users.find(u => u.id === tableOrder.waiterId)
+              : null;
+
+            // Count active items
+            const itemCount = tableOrder ? tableOrder.items.length : 0;
 
             // Determine background and text based on status
             let statusBg = "bg-white border-zinc-200 text-zinc-800 hover:bg-zinc-50";
             let statusText = "Libre";
-            let colorAccent = "bg-zinc-300";
+            let colorAccent = "bg-emerald-500";
 
             if (tbl.status === TableStatus.OCCUPIED) {
               statusBg = "bg-red-50 border-red-200 text-red-900 hover:bg-red-100";
@@ -652,27 +721,53 @@ export default function MozoView({
             }
 
             return (
-              <button
+              <motion.button
                 key={tbl.id}
+                initial={{ opacity: 0, y: 12 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.2, delay: idx * 0.04 }}
                 onClick={() => {
                   setSelectedTable(tbl);
                   setIsOpeningTable(false);
                 }}
-                className={`border-2 rounded-2xl p-4 flex flex-col justify-between items-start text-left transition-all h-28 relative cursor-pointer ${
-                  isSelected ? "border-zinc-900 ring-2 ring-amber-500/20 shadow-md" : ""
+                className={`border-2 rounded-2xl p-3.5 flex flex-col justify-between items-start text-left transition-all min-h-[130px] relative cursor-pointer ${
+                  isSelected ? "border-zinc-900 ring-2 ring-amber-500/30 shadow-lg scale-[1.02]" : "hover:shadow-md"
                 } ${statusBg}`}
               >
                 <div className="flex justify-between items-center w-full">
                   <span className="font-black text-lg">Mesa {tbl.number}</span>
-                  <div className={`w-2.5 h-2.5 rounded-full ${colorAccent}`} />
+                  <div className="flex items-center gap-1.5">
+                    {elapsedText && (
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                        (tableOrder && (currentTime.getTime() - new Date(tableOrder.createdAt).getTime()) > 3600000)
+                          ? "bg-red-200 text-red-800"
+                          : "bg-zinc-200 text-zinc-600"
+                      }`}>
+                        ⏱ {elapsedText}
+                      </span>
+                    )}
+                    <div className={`w-2.5 h-2.5 rounded-full ${colorAccent}`} />
+                  </div>
                 </div>
-                <div>
+                <div className="w-full">
                   <span className="text-[10px] font-bold text-zinc-500 block uppercase">{statusText}</span>
-                  <span className="text-xs font-semibold text-zinc-600 block flex items-center gap-1">
-                    <Users className="w-3 h-3" /> {tbl.seats} comensales
-                  </span>
+                  <div className="flex justify-between items-end w-full mt-0.5">
+                    <span className="text-xs font-semibold text-zinc-600 flex items-center gap-1">
+                      <Users className="w-3 h-3" /> {tbl.seats} asientos
+                    </span>
+                    {itemCount > 0 && (
+                      <span className="text-[10px] font-bold bg-zinc-900 text-white px-1.5 py-0.5 rounded-md">
+                        {itemCount} ítem{itemCount > 1 ? "s" : ""}
+                      </span>
+                    )}
+                  </div>
+                  {assignedWaiter && (
+                    <span className="text-[10px] text-zinc-400 font-semibold mt-1 block truncate">
+                      👤 {assignedWaiter.name.replace(/ \(.*\)/, "")}
+                    </span>
+                  )}
                 </div>
-              </button>
+              </motion.button>
             );
           })}
         </div>
