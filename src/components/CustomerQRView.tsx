@@ -125,23 +125,35 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
 
   /* ─── PDF / Print Download (mobile-friendly) ─── */
   const handleDownloadPDF = () => {
+    const escapeHTML = (value: string) =>
+      value.replace(/[&<>"']/g, (char) => {
+        const entities: Record<string, string> = {
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        };
+        return entities[char];
+      });
+
     const menuHTML = state.categories
       .map((cat) => {
         const prods = state.products.filter((p) => p.categoryId === cat.id && p.isAvailable);
         if (prods.length === 0) return "";
         return `
           <div class="category">
-            <h2>${cat.name}</h2>
+            <h2>${escapeHTML(cat.name)}</h2>
             ${prods
               .map(
                 (p) => `
               <div class="item">
                 <div class="item-header">
-                  <span class="item-name">${p.name}</span>
+                  <span class="item-name">${escapeHTML(p.name)}</span>
                   <span class="item-price">$${p.price.toLocaleString("es-CL")}</span>
                 </div>
-                ${p.description ? `<p class="item-desc">${p.description}</p>` : ""}
-                ${p.allergens && p.allergens.length > 0 ? `<p class="item-allergens">⚠️ ${p.allergens.join(", ")}</p>` : ""}
+                ${p.description ? `<p class="item-desc">${escapeHTML(p.description)}</p>` : ""}
+                ${p.allergens && p.allergens.length > 0 ? `<p class="item-allergens">⚠️ ${escapeHTML(p.allergens.join(", "))}</p>` : ""}
               </div>`
               )
               .join("")}

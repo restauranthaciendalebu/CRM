@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { User, RestaurantState } from "../types";
-import { Utensils, Lock, Delete } from "lucide-react";
+import { Utensils } from "lucide-react";
 import { motion } from "motion/react";
 
 interface LoginViewProps {
@@ -122,8 +122,7 @@ export default function LoginView({ onLoginSuccess, state }: LoginViewProps) {
         </div>
 
         <div className="text-zinc-600 text-[10px] text-center mt-6">
-          PINs por defecto: <br />
-          <strong>2222</strong> (Juan - Mozo) | <strong>3333</strong> (Carlos - Cocina) | <strong>1234</strong> (Don Ricardo - Admin)
+          Si olvidaste tu PIN, solicita un reinicio a administración.
         </div>
       </motion.div>
     </div>
