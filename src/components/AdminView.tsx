@@ -110,23 +110,197 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [crmSearch, setCrmSearch] = useState("");
   const [selectedCrmCustomer, setSelectedCrmCustomer] = useState<Customer | null>(null);
 
+  // Date filters for Historial de Boletas
+  const [boletasPeriod, setBoletasPeriod] = useState<string>("all"); // "today", "yesterday", "7days", "30days", "all", "custom"
+  const [boletasStartDate, setBoletasStartDate] = useState<string>("");
+  const [boletasEndDate, setBoletasEndDate] = useState<string>("");
+
+  // Date filters for Reportes Analíticos
+  const [reportsPeriod, setReportsPeriod] = useState<string>("today"); // "today", "yesterday", "thisweek", "thismonth", "lastmonth", "custom"
+  const [reportsStartDate, setReportsStartDate] = useState<string>("");
+  const [reportsEndDate, setReportsEndDate] = useState<string>("");
+
   useEffect(() => {
     onRefreshState();
   }, []);
 
   const formatCLP = (val: number) => "$" + Math.round(val).toLocaleString("es-CL");
 
+  const renderTrendBadge = (current: number, previous: number) => {
+    if (previous <= 0) {
+      return (
+        <span className="text-[10px] text-zinc-400 font-semibold mt-1 block">
+          Sin datos previos
+        </span>
+      );
+    }
+    const percentChange = Math.round(((current - previous) / previous) * 100);
+    const isPositive = percentChange >= 0;
+    return (
+      <span className={`text-[10px] font-bold mt-1 block ${isPositive ? "text-emerald-600" : "text-red-500"}`}>
+        {isPositive ? "▲" : "▼"} {Math.abs(percentChange)}% vs. anterior
+      </span>
+    );
+  };
+
+  const isDateInPeriod = (dateStr: string, period: string, start?: string, end?: string): boolean => {
+    if (!dateStr) return false;
+    const date = new Date(dateStr);
+    const now = new Date();
+    
+    // Set hours to 0 to compare full days
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const orderDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    
+    switch (period) {
+      case "today": {
+        return orderDay.getTime() === today.getTime();
+      }
+      case "yesterday": {
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        return orderDay.getTime() === yesterday.getTime();
+      }
+      case "7days": {
+        const sevenDaysAgo = new Date(today);
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        return orderDay.getTime() >= sevenDaysAgo.getTime() && orderDay.getTime() <= today.getTime();
+      }
+      case "30days": {
+        const thirtyDaysAgo = new Date(today);
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        return orderDay.getTime() >= thirtyDaysAgo.getTime() && orderDay.getTime() <= today.getTime();
+      }
+      case "thisweek": {
+        // Start of this week (assume Monday)
+        const day = today.getDay();
+        const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+        const startOfWeek = new Date(now.getFullYear(), now.getMonth(), diff);
+        return orderDay.getTime() >= startOfWeek.getTime();
+      }
+      case "thismonth": {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        return orderDay.getTime() >= startOfMonth.getTime();
+      }
+      case "lastmonth": {
+        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+        return orderDay.getTime() >= startOfLastMonth.getTime() && orderDay.getTime() <= endOfLastMonth.getTime();
+      }
+      case "custom": {
+        if (!start) return true;
+        const startDate = new Date(start + "T00:00:00");
+        const endDate = end ? new Date(end + "T23:59:59") : new Date();
+        return date.getTime() >= startDate.getTime() && date.getTime() <= endDate.getTime();
+      }
+      case "all":
+      default:
+        return true;
+    }
+  };
+
+  const isDateInPreviousPeriod = (dateStr: string, period: string, start?: string, end?: string): boolean => {
+    if (!dateStr) return false;
+    const date = new Date(dateStr);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const orderDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    
+    switch (period) {
+      case "today": {
+        // Previous period is yesterday
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+        return orderDay.getTime() === yesterday.getTime();
+      }
+      case "yesterday": {
+        // Previous period is day before yesterday
+        const dayBefore = new Date(today);
+        dayBefore.setDate(dayBefore.getDate() - 2);
+        return orderDay.getTime() === dayBefore.getTime();
+      }
+      case "7days": {
+        // 8 to 14 days ago
+        const startPrev = new Date(today);
+        startPrev.setDate(startPrev.getDate() - 14);
+        const endPrev = new Date(today);
+        endPrev.setDate(endPrev.getDate() - 8);
+        return orderDay.getTime() >= startPrev.getTime() && orderDay.getTime() <= endPrev.getTime();
+      }
+      case "30days": {
+        // 31 to 60 days ago
+        const startPrev = new Date(today);
+        startPrev.setDate(startPrev.getDate() - 60);
+        const endPrev = new Date(today);
+        endPrev.setDate(endPrev.getDate() - 31);
+        return orderDay.getTime() >= startPrev.getTime() && orderDay.getTime() <= endPrev.getTime();
+      }
+      case "thisweek": {
+        // Last week
+        const day = today.getDay();
+        const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+        const startOfWeek = new Date(now.getFullYear(), now.getMonth(), diff);
+        const startOfLastWeek = new Date(startOfWeek);
+        startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
+        const endOfLastWeek = new Date(startOfWeek);
+        endOfLastWeek.setDate(endOfLastWeek.getDate() - 1);
+        return orderDay.getTime() >= startOfLastWeek.getTime() && orderDay.getTime() <= endOfLastWeek.getTime();
+      }
+      case "thismonth": {
+        // Last month
+        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+        return orderDay.getTime() >= startOfLastMonth.getTime() && orderDay.getTime() <= endOfLastMonth.getTime();
+      }
+      case "lastmonth": {
+        // Month before last
+        const startOfTwoMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+        const endOfTwoMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 1, 0);
+        return orderDay.getTime() >= startOfTwoMonthsAgo.getTime() && orderDay.getTime() <= endOfTwoMonthsAgo.getTime();
+      }
+      case "custom": {
+        if (!start) return false;
+        const startDate = new Date(start + "T00:00:00");
+        const endDate = end ? new Date(end + "T23:59:59") : new Date();
+        const durationMs = endDate.getTime() - startDate.getTime();
+        const startPrev = new Date(startDate.getTime() - durationMs - 1000);
+        const endPrev = new Date(startDate.getTime() - 1000);
+        return date.getTime() >= startPrev.getTime() && date.getTime() <= endPrev.getTime();
+      }
+      default:
+        return false;
+    }
+  };
+
   // 1. CALCULATE REAL METRICS FROM COMPLETED PAYMENTS & ORDERS
   const completedPayments = state.payments || [];
-  const totalSalesVolume = completedPayments.reduce((sum, p) => sum + p.amount, 0);
-  const totalTipVolume = completedPayments.reduce((sum, p) => sum + p.tip, 0);
-  const totalOrdersCount = state.orders.length;
-  const closedOrdersCount = state.orders.filter(o => o.status === "CLOSED").length;
+  const allOrders = state.orders || [];
+
+  // Filter current period
+  const currentPayments = completedPayments.filter(p => isDateInPeriod(p.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
+  const currentOrders = allOrders.filter(o => isDateInPeriod(o.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
+  const currentClosedOrders = currentOrders.filter(o => o.status === "CLOSED");
+
+  const totalSalesVolume = currentPayments.reduce((sum, p) => sum + p.amount, 0);
+  const totalTipVolume = currentPayments.reduce((sum, p) => sum + p.tip, 0);
+  const totalOrdersCount = currentOrders.length;
+  const closedOrdersCount = currentClosedOrders.length;
   const averageTicket = closedOrdersCount > 0 ? Math.round(totalSalesVolume / closedOrdersCount) : 0;
+
+  // Filter previous period
+  const prevPayments = completedPayments.filter(p => isDateInPreviousPeriod(p.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
+  const prevOrders = allOrders.filter(o => isDateInPreviousPeriod(o.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
+  const prevClosedOrders = prevOrders.filter(o => o.status === "CLOSED");
+
+  const prevSalesVolume = prevPayments.reduce((sum, p) => sum + p.amount, 0);
+  const prevTipVolume = prevPayments.reduce((sum, p) => sum + p.tip, 0);
+  const prevOrdersCount = prevOrders.length;
+  const prevClosedOrdersCount = prevClosedOrders.length;
+  const prevAverageTicket = prevClosedOrdersCount > 0 ? Math.round(prevSalesVolume / prevClosedOrdersCount) : 0;
 
   // Best selling products count
   const productSalesMap: Record<string, number> = {};
-  state.orders.forEach(o => {
+  currentOrders.forEach(o => {
     o.items.forEach(it => {
       productSalesMap[it.productId] = (productSalesMap[it.productId] || 0) + it.quantity;
     });
@@ -311,6 +485,18 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setIsProductModalOpen(true);
   };
 
+  const openEditProductModal = (product: Product) => {
+    setEditingProductModal(product);
+    setProdName(product.name);
+    setProdPrice(product.price);
+    setProdCategoryId(product.categoryId);
+    setProdDescription(product.description || "");
+    setProdImageUrl(product.imageUrl || "");
+    setProdAllergens(product.allergens || []);
+    setProdError("");
+    setIsProductModalOpen(true);
+  };
+
   const handleSaveProduct = async () => {
     if (!prodName.trim()) {
       setProdError("El nombre es requerido.");
@@ -412,15 +598,63 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
         {/* TAB 1: REPORTS */}
         {activeTab === "reports" && (
           <div className="space-y-6" id="admin-reports-tab">
+            {/* Period Selector Card */}
+            <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4 text-left">
+              <div>
+                <h3 className="font-bold text-zinc-900 text-sm flex items-center gap-1.5">
+                  📊 Reportes Analíticos e Indicadores
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">Compara el rendimiento financiero y operativo entre diferentes períodos de tiempo.</p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="font-bold text-zinc-500">Período:</span>
+                <select
+                  value={reportsPeriod}
+                  onChange={(e) => setReportsPeriod(e.target.value)}
+                  className="bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-1.5 font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                >
+                  <option value="today">Hoy</option>
+                  <option value="yesterday">Ayer</option>
+                  <option value="7days">Últimos 7 días</option>
+                  <option value="thisweek">Esta Semana</option>
+                  <option value="thismonth">Este Mes</option>
+                  <option value="lastmonth">Mes Anterior</option>
+                  <option value="custom">Rango Personalizado</option>
+                </select>
+
+                {reportsPeriod === "custom" && (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="date"
+                      value={reportsStartDate}
+                      onChange={(e) => setReportsStartDate(e.target.value)}
+                      className="bg-zinc-50 border border-zinc-200 rounded-xl px-2 py-1 font-bold text-zinc-700 text-[11px]"
+                    />
+                    <span className="text-zinc-400 text-[10px]">al</span>
+                    <input
+                      type="date"
+                      value={reportsEndDate}
+                      onChange={(e) => setReportsEndDate(e.target.value)}
+                      className="bg-zinc-50 border border-zinc-200 rounded-xl px-2 py-1 font-bold text-zinc-700 text-[11px]"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Bento Statistics Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-left">
               <div className="bg-white border border-zinc-200 p-4 rounded-2xl shadow-sm flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-500 flex items-center justify-center flex-shrink-0">
                   <TrendingUp className="w-5 h-5" />
                 </div>
                 <div>
-                  <span className="text-[10px] uppercase font-bold text-zinc-400">Ventas Hoy</span>
+                  <span className="text-[10px] uppercase font-bold text-zinc-400">
+                    {reportsPeriod === "today" ? "Ventas Hoy" : reportsPeriod === "yesterday" ? "Ventas Ayer" : "Ventas del Período"}
+                  </span>
                   <h3 className="font-extrabold text-lg text-zinc-950 mt-0.5">{formatCLP(totalSalesVolume)}</h3>
+                  {renderTrendBadge(totalSalesVolume, prevSalesVolume)}
                 </div>
               </div>
 
@@ -431,6 +665,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                 <div>
                   <span className="text-[10px] uppercase font-bold text-zinc-400">Ticket Promedio</span>
                   <h3 className="font-extrabold text-lg text-zinc-950 mt-0.5">{formatCLP(averageTicket)}</h3>
+                  {renderTrendBadge(averageTicket, prevAverageTicket)}
                 </div>
               </div>
 
@@ -441,6 +676,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                 <div>
                   <span className="text-[10px] uppercase font-bold text-zinc-400">Total Comandas</span>
                   <h3 className="font-extrabold text-lg text-zinc-950 mt-0.5">{totalOrdersCount} mesas</h3>
+                  {renderTrendBadge(totalOrdersCount, prevOrdersCount)}
                 </div>
               </div>
 
@@ -451,6 +687,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                 <div>
                   <span className="text-[10px] uppercase font-bold text-zinc-400">Propinas Recibidas</span>
                   <h3 className="font-extrabold text-lg text-zinc-950 mt-0.5">{formatCLP(totalTipVolume)}</h3>
+                  {renderTrendBadge(totalTipVolume, prevTipVolume)}
                 </div>
               </div>
             </div>
@@ -486,9 +723,9 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                 <div className="space-y-3.5 text-xs text-zinc-700">
                   {state.users.filter(u => u.role === "WAITER").map((w) => {
                     // Calculate wait staff's orders
-                    const waiterOrders = state.orders.filter(o => o.waiterId === w.id);
-                    const completedSales = state.payments.filter(p => {
-                      const ord = state.orders.find(o => o.id === p.orderId);
+                    const waiterOrders = currentOrders.filter(o => o.waiterId === w.id);
+                    const completedSales = currentPayments.filter(p => {
+                      const ord = currentOrders.find(o => o.id === p.orderId);
                       return ord && ord.waiterId === w.id;
                     });
                     const salesVolume = completedSales.reduce((s, p) => s + p.amount, 0);
@@ -519,8 +756,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                 {state.categories.map((cat) => {
                   // Calculate total sales in this category
                   let catSales = 0;
-                  state.payments.forEach(pay => {
-                    const ord = state.orders.find(o => o.id === pay.orderId);
+                  currentPayments.forEach(pay => {
+                    const ord = currentOrders.find(o => o.id === pay.orderId);
                     if (ord) {
                       ord.items.forEach(it => {
                         const prod = state.products.find(p => p.id === it.productId);
@@ -534,8 +771,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                   // Calculate percentage width for visual chart bar
                   const maxVal = Math.max(...state.categories.map(c => {
                     let s = 0;
-                    state.payments.forEach(p => {
-                      const o = state.orders.find(or => or.id === p.orderId);
+                    currentPayments.forEach(p => {
+                      const o = currentOrders.find(or => or.id === p.orderId);
                       if (o) o.items.forEach(it => {
                         const pr = state.products.find(pro => pro.id === it.productId);
                         if (pr && pr.categoryId === c.id) s += pr.price * it.quantity;
@@ -591,31 +828,15 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                   </div>
 
                   <div className="flex items-center gap-3">
-                    {editingProduct?.id === p.id ? (
-                      <div className="flex gap-1">
-                        <input
-                          type="number"
-                          value={editPrice}
-                          onChange={(e) => setEditPrice(Number(e.target.value))}
-                          className="bg-zinc-50 border border-zinc-200 rounded p-1 w-20 text-xs text-zinc-900 font-bold"
-                        />
-                        <button onClick={handlePriceUpdate} className="bg-emerald-600 text-white px-2 py-1 rounded font-bold">✓</button>
-                        <button onClick={() => setEditingProduct(null)} className="bg-zinc-200 text-zinc-700 px-2 py-1 rounded font-bold">X</button>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="font-extrabold text-zinc-900">{formatCLP(p.price)}</span>
-                        <button
-                          onClick={() => {
-                            setEditingProduct(p);
-                            setEditPrice(p.price);
-                          }}
-                          className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <span className="font-extrabold text-zinc-900">{formatCLP(p.price)}</span>
+                      <button
+                        onClick={() => openEditProductModal(p)}
+                        className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                      >
+                        <Edit3 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
 
                     <button
                       onClick={() => handleToggleProduct(p.id)}
@@ -899,19 +1120,53 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
         {activeTab === "boletas" && (
           <div className="space-y-6" id="admin-boletas-tab">
             <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-                <div>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 border-b border-zinc-100 pb-4">
+                <div className="text-left">
                   <h3 className="font-bold text-zinc-900 text-sm flex items-center gap-1.5">
                     <FileText className="w-4 h-4 text-amber-500" /> Historial de Boletas & Ventas Cerradas
                   </h3>
                   <p className="text-xs text-zinc-400 mt-0.5">Visualiza, audita e imprime boletas de consumo, o realiza anulaciones que restauran inventario.</p>
                 </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="font-bold text-zinc-500">Filtrar por:</span>
+                  <select
+                    value={boletasPeriod}
+                    onChange={(e) => setBoletasPeriod(e.target.value)}
+                    className="bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-1.5 font-bold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
+                  >
+                    <option value="all">Todas las fechas</option>
+                    <option value="today">Hoy</option>
+                    <option value="yesterday">Ayer</option>
+                    <option value="7days">Últimos 7 días</option>
+                    <option value="30days">Últimos 30 días</option>
+                    <option value="custom">Rango Personalizado</option>
+                  </select>
+
+                  {boletasPeriod === "custom" && (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="date"
+                        value={boletasStartDate}
+                        onChange={(e) => setBoletasStartDate(e.target.value)}
+                        className="bg-zinc-50 border border-zinc-200 rounded-xl px-2 py-1 font-bold text-zinc-700 text-[11px]"
+                      />
+                      <span className="text-zinc-400 text-[10px]">al</span>
+                      <input
+                        type="date"
+                        value={boletasEndDate}
+                        onChange={(e) => setBoletasEndDate(e.target.value)}
+                        className="bg-zinc-50 border border-zinc-200 rounded-xl px-2 py-1 font-bold text-zinc-700 text-[11px]"
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="space-y-3">
-                {state.orders.filter(o => o.status === "CLOSED" || (o as any).voided).length > 0 ? (
+                {state.orders.filter(o => (o.status === "CLOSED" || (o as any).voided) && isDateInPeriod(o.updatedAt, boletasPeriod, boletasStartDate, boletasEndDate)).length > 0 ? (
                   [...state.orders]
-                    .filter(o => o.status === "CLOSED" || (o as any).voided)
+                    .filter(o => (o.status === "CLOSED" || (o as any).voided) && isDateInPeriod(o.updatedAt, boletasPeriod, boletasStartDate, boletasEndDate))
                     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
                     .map((order) => {
                       const isVoided = (order as any).voided;
@@ -1388,7 +1643,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
             <div className="p-5 border-b border-zinc-100 flex items-center justify-between">
               <h3 className="text-base font-extrabold text-zinc-900 flex items-center gap-2">
                 <UtensilsCrossed className="w-5 h-5 text-amber-500" />
-                Agregar Nuevo Plato
+                {editingProductModal ? "Editar Plato" : "Agregar Nuevo Plato"}
               </h3>
               <button onClick={() => setIsProductModalOpen(false)} className="text-zinc-400 hover:text-zinc-600 cursor-pointer">
                 <X className="w-5 h-5" />
@@ -1497,7 +1752,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                 disabled={isProductSaving}
                 className="flex-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-extrabold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer disabled:opacity-50"
               >
-                {isProductSaving ? "Guardando..." : "Guardar Plato"}
+                {isProductSaving ? "Guardando..." : editingProductModal ? "Guardar Cambios" : "Guardar Plato"}
               </button>
             </div>
           </div>

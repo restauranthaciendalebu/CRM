@@ -16,9 +16,6 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
     if (pinInput.length < 4) {
       const nextPin = pinInput + num;
       setPinInput(nextPin);
-      if (nextPin.length === 4) {
-        validateAdminPin(nextPin);
-      }
     }
   };
 
@@ -115,9 +112,13 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
           >
             0
           </button>
-          <div className="w-16 h-16 flex items-center justify-center">
-            <Lock className="w-5 h-5 text-zinc-700" />
-          </div>
+          <button
+            onClick={() => validateAdminPin(pinInput)}
+            disabled={isValidating || pinInput.length === 0}
+            className="w-16 h-16 rounded-full bg-emerald-600 hover:bg-emerald-500 font-bold text-xs flex items-center justify-center transition-all active:scale-90 border border-emerald-500/50 cursor-pointer disabled:opacity-55 text-white"
+          >
+            Aceptar
+          </button>
         </div>
 
         <div className="text-zinc-600 text-[10px] text-center mt-6">
