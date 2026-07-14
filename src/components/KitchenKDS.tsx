@@ -51,7 +51,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
   // Group items by category to filter between Food (Cocina) vs Drink (Bar)
   const isDrinkCategory = (productId: string) => {
     const prod = state.products.find((p) => p.id === productId);
-    return prod?.categoryId === "c3"; // "Bebidas y Tragos"
+    return ["c3", "cat_tragos", "cat_bebidas"].includes(prod?.categoryId || "");
   };
 
   const hasItemsForFilter = (order: Order) => {
@@ -170,8 +170,24 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
       {/* TICKETS LIST */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 flex-1">
         {filteredOrders.map((order) => {
-          const elapsedMins = getElapsedMinutes(order.createdAt);
-          const isLate = elapsedMins >= 10; // Red alert if 10 minutes exceeded
+          const visibleItems = order.items.filter((it) => {
+            if (filterType === "all") return true;
+            const isDrink = isDrinkCategory(it.productId);
+            return filterType === "bar" ? isDrink : !isDrink;
+          });
+          const hasRunningItems = visibleItems.some((it) =>
+            it.status === OrderItemStatus.PENDING || it.status === OrderItemStatus.PREPARING
+          );
+          const allVisibleItemsReady = visibleItems.length > 0 && visibleItems.every((it) =>
+            it.status === OrderItemStatus.READY || it.status === OrderItemStatus.DELIVERED
+          );
+          const allVisibleItemsDelivered = visibleItems.length > 0 && visibleItems.every((it) =>
+            it.status === OrderItemStatus.DELIVERED
+          );
+          const timerStartedAt = order.kitchenSentAt || order.updatedAt || order.createdAt;
+          const elapsedMins = hasRunningItems ? getElapsedMinutes(timerStartedAt) : 0;
+          const isLate = hasRunningItems && elapsedMins >= 10;
+          const isResolved = !hasRunningItems && allVisibleItemsReady;
 
           return (
             <div
@@ -179,11 +195,15 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
               className={`bg-zinc-900 border rounded-2xl overflow-hidden flex flex-col justify-between transition-all ${
                 isLate 
                   ? "border-red-500/50 ring-2 ring-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.15)] animate-pulse" 
+                  : isResolved
+                  ? "border-emerald-500/40 ring-1 ring-emerald-500/15 shadow-[0_0_15px_rgba(16,185,129,0.12)]"
                   : "border-zinc-800 shadow-xl"
               }`}
             >
               {/* Ticket Header */}
-              <div className={`p-3.5 flex justify-between items-start ${isLate ? "bg-red-950/40" : "bg-zinc-800/50"}`}>
+              <div className={`p-3.5 flex justify-between items-start ${
+                isLate ? "bg-red-950/40" : isResolved ? "bg-emerald-950/30" : "bg-zinc-800/50"
+              }`}>
                 <div>
                   <h3 className="font-extrabold text-lg text-white">Mesa {getTableNumber(order.tableId)}</h3>
                   <span className="text-[10px] text-zinc-400 font-bold block mt-0.5">
@@ -193,22 +213,23 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
 
                 {/* TIMER CLOCK */}
                 <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black ${
-                  isLate ? "bg-red-500/20 text-red-400 border border-red-500/30" : "bg-zinc-800 text-zinc-300 border border-zinc-700"
+                  isLate
+                    ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                    : isResolved
+                    ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
+                    : "bg-zinc-800 text-zinc-300 border border-zinc-700"
                 }`}>
                   <Clock className="w-3.5 h-3.5" />
-                  <span>{getElapsedTimeText(order.createdAt)}</span>
+                  <span>
+                    {hasRunningItems ? getElapsedTimeText(timerStartedAt) : allVisibleItemsDelivered ? "Servido" : "Listo"}
+                  </span>
                   {isLate && <AlertTriangle className="w-3.5 h-3.5 text-red-400 animate-bounce" />}
                 </div>
               </div>
 
               {/* Items checklist */}
               <div className="p-4 flex-1 space-y-3.5">
-                {order.items
-                  .filter((it) => {
-                    if (filterType === "all") return true;
-                    const isDrink = isDrinkCategory(it.productId);
-                    return filterType === "bar" ? isDrink : !isDrink;
-                  })
+                {visibleItems
                   .map((it) => {
                     const prod = state.products.find((p) => p.id === it.productId);
                     if (!prod) return null;

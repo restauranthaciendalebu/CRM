@@ -32,6 +32,7 @@ import {
   Heart
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { MENU_CATEGORY_TRANSLATIONS, MENU_PRODUCT_TRANSLATIONS } from "../menuTranslations";
 
 interface ClienteViewProps {
   state: RestaurantState;
@@ -226,21 +227,22 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
 
   const getTranslatedCategoryName = (cat: Category) => {
     if (language === 'en') {
-      if (cat.id === "c1") return "Appetizers";
-      if (cat.id === "c2") return "Main Courses";
-      if (cat.id === "c3") return "Drinks & Wines";
-      if (cat.id === "c4") return "Desserts";
+      const translatedName = (cat as Category & { nameEn?: string }).nameEn || MENU_CATEGORY_TRANSLATIONS[cat.id];
+      if (translatedName) return translatedName;
     }
     return cat.name;
   };
 
   const getTranslatedProductData = (p: Product) => {
-    if (language === 'en' && PRODUCT_TRANSLATIONS[p.id]) {
-      return {
-        ...p,
-        name: PRODUCT_TRANSLATIONS[p.id].name,
-        description: PRODUCT_TRANSLATIONS[p.id].description,
-      };
+    if (language === 'en') {
+      const staticTranslation = MENU_PRODUCT_TRANSLATIONS[p.id] || PRODUCT_TRANSLATIONS[p.id];
+      if (p.nameEn || p.descriptionEn || staticTranslation) {
+        return {
+          ...p,
+          name: p.nameEn || staticTranslation?.name || p.name,
+          description: p.descriptionEn || staticTranslation?.description || p.description,
+        };
+      }
     }
     return p;
   };

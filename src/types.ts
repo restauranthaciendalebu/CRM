@@ -89,7 +89,9 @@ export interface RecipeItem {
 export interface Product {
   id: string;
   name: string;
+  nameEn?: string;
   description: string;
+  descriptionEn?: string;
   price: number;
   imageUrl?: string;
   categoryId: string;
@@ -134,6 +136,7 @@ export interface Order {
   notes?: string;
   createdAt: string;
   updatedAt: string;
+  kitchenSentAt?: string;
   items: OrderItem[];
   customerPhone?: string; // linked customer if registered/found
 }

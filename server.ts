@@ -297,22 +297,26 @@ async function startServer() {
 
       // Find all PENDING items and send them to PREPARING
       let updatedCount = 0;
+      const sentItemIds = new Set<string>();
       order.items.forEach(item => {
         if (item.status === OrderItemStatus.PENDING) {
           item.status = OrderItemStatus.PREPARING;
+          sentItemIds.add(item.id);
           updatedCount++;
         }
       });
 
       if (updatedCount > 0) {
+        const now = new Date().toISOString();
         // Deduct ingredients stock
         LocalDb.deductStockForOrder({
           ...order,
-          items: order.items.filter(it => it.status === OrderItemStatus.PREPARING)
+          items: order.items.filter(it => sentItemIds.has(it.id) && it.status === OrderItemStatus.PREPARING)
         }, state);
 
         order.status = OrderStatus.PREPARING;
-        order.updatedAt = new Date().toISOString();
+        order.kitchenSentAt = now;
+        order.updatedAt = now;
         success = true;
       } else {
         errorMsg = "No pending items to send to kitchen";

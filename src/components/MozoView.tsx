@@ -155,6 +155,13 @@ export default function MozoView({
   const activeOrder = selectedTable
     ? state.orders.find(o => o.tableId === selectedTable.id && o.status !== OrderStatus.CLOSED)
     : null;
+  const hasPendingKitchenItems = activeOrder?.items.some((it) => it.status === OrderItemStatus.PENDING) ?? false;
+
+  const openAddItemsModal = () => {
+    setWaiterSearchTerm("");
+    setWaiterCategoryFilter("all");
+    setIsAddingItems(true);
+  };
 
   // 3. TABLE LIFE CYCLE
   const handleOpenTableSubmit = async () => {
@@ -219,7 +226,7 @@ export default function MozoView({
 
   // Kitchen direct submit (sends pending to kitchen and triggers ingredient deduction)
   const handleSendToKitchen = async () => {
-    if (!activeOrder) return;
+    if (!activeOrder || !hasPendingKitchenItems) return;
     try {
       const res = await fetch(`/api/orders/${activeOrder.id}/send-to-kitchen`, {
         method: "POST"
@@ -939,16 +946,21 @@ export default function MozoView({
                   {/* COMMAND ACTIONS */}
                   <div className="grid grid-cols-2 gap-2">
                     <button
-                      onClick={() => setIsAddingItems(true)}
+                      onClick={openAddItemsModal}
                       className="bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-900 font-bold p-3 rounded-xl text-xs flex items-center justify-center gap-1 shadow-sm cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" /> Agregar Ítem
                     </button>
                     <button
                       onClick={handleSendToKitchen}
-                      className="bg-zinc-950 hover:bg-amber-600 text-white font-bold p-3 rounded-xl text-xs flex items-center justify-center gap-1 shadow-sm cursor-pointer"
+                      disabled={!hasPendingKitchenItems}
+                      className={`font-bold p-3 rounded-xl text-xs flex items-center justify-center gap-1 shadow-sm transition-all ${
+                        hasPendingKitchenItems
+                          ? "bg-zinc-950 hover:bg-amber-600 text-white cursor-pointer"
+                          : "bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed"
+                      }`}
                     >
-                      Enviar a Cocina
+                      {hasPendingKitchenItems ? "Enviar a Cocina" : "Sin nuevos platos"}
                     </button>
                   </div>
                 </div>
