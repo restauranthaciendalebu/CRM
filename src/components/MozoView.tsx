@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { printThermalReceipt } from "./ThermalReceipt";
+import { isDirectServiceProduct } from "../orderUtils";
 
 interface MozoViewProps {
   state: RestaurantState;
@@ -263,12 +264,16 @@ export default function MozoView({
         order.items.forEach((item) => {
           if (item.status === OrderItemStatus.PENDING) {
             const product = nextState.products.find((candidate) => candidate.id === item.productId);
-            item.status = product?.requiresKitchen === false
+            item.status = isDirectServiceProduct(product)
               ? OrderItemStatus.READY
               : OrderItemStatus.PREPARING;
           }
         });
-        order.status = OrderStatus.PREPARING;
+        const hasPreparingItems = order.items.some((item) => item.status === OrderItemStatus.PREPARING);
+        const allItemsReady = order.items.length > 0 && order.items.every((item) =>
+          item.status === OrderItemStatus.READY || item.status === OrderItemStatus.DELIVERED
+        );
+        order.status = allItemsReady && !hasPreparingItems ? OrderStatus.READY : OrderStatus.PREPARING;
         order.kitchenSentAt = sentAt;
         order.updatedAt = sentAt;
       });
@@ -300,7 +305,10 @@ export default function MozoView({
   const handleUpdateItemStatus = async (itemId: string, currentStatus: OrderItemStatus) => {
     if (!activeOrder || pendingOrderActionIds.includes(itemId)) return;
     let nextStatus: OrderItemStatus;
-    if (currentStatus === OrderItemStatus.PENDING) nextStatus = OrderItemStatus.PREPARING;
+    const product = state.products.find((candidate) => candidate.id === activeOrder.items.find((item) => item.id === itemId)?.productId);
+    if (currentStatus === OrderItemStatus.PENDING) {
+      nextStatus = isDirectServiceProduct(product) ? OrderItemStatus.READY : OrderItemStatus.PREPARING;
+    }
     else if (currentStatus === OrderItemStatus.PREPARING) nextStatus = OrderItemStatus.READY;
     else if (currentStatus === OrderItemStatus.READY) nextStatus = OrderItemStatus.DELIVERED;
     else return; // Already delivered
@@ -1007,7 +1015,7 @@ export default function MozoView({
                               >
                                 {isUpdating && "Actualizando..."}
                                 {!isUpdating && it.status === OrderItemStatus.PENDING && "Pendiente"}
-                                {!isUpdating && it.status === OrderItemStatus.PREPARING && "Cocinando"}
+                                {!isUpdating && it.status === OrderItemStatus.PREPARING && "Preparando"}
                                 {!isUpdating && it.status === OrderItemStatus.READY && "Entregar"}
                                 {!isUpdating && it.status === OrderItemStatus.DELIVERED && "Servido ✔"}
                               </button>

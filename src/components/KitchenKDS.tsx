@@ -61,7 +61,9 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
 
   // Filter orders that are active and not closed
   const activeOrders = state.orders.filter(
-    (o) => o.status !== OrderStatus.CLOSED && o.status !== OrderStatus.PENDING_APPROVAL
+    (o) => o.status !== OrderStatus.CLOSED &&
+      o.status !== OrderStatus.PENDING_APPROVAL &&
+      o.items.some((item) => state.products.find((product) => product.id === item.productId)?.requiresKitchen !== false)
   );
 
   // Group items by category to filter between Food (Cocina) vs Drink (Bar)
@@ -312,7 +314,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                           <div className="text-right">
                             {it.status === OrderItemStatus.PREPARING && (
                               <span className="text-blue-400 text-[10px] uppercase font-black tracking-wider animate-pulse">
-                                Cocinando
+                                Preparando
                               </span>
                             )}
                             {it.status === OrderItemStatus.READY && (

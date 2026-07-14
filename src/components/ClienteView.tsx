@@ -758,7 +758,7 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                         <span className="text-zinc-400 text-[10px]">En cola</span>
                       )}
                       {it.status === OrderItemStatus.PREPARING && (
-                        <span className="text-blue-500 text-[10px] font-bold animate-pulse">Cocinando</span>
+                        <span className="text-blue-500 text-[10px] font-bold animate-pulse">Preparando</span>
                       )}
                       {it.status === OrderItemStatus.READY && (
                         <span className="text-emerald-500 text-[10px] font-bold">Listo</span>

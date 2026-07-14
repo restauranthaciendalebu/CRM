@@ -17,6 +17,7 @@ import {
   Customer
 } from "./types";
 import { DEMO_STATE } from "./demoState";
+import { isDirectServiceProduct } from "./orderUtils";
 
 const STATE_DOC_REF = doc(db, "settings", "restaurant_state");
 
@@ -403,7 +404,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           if (item.status === OrderItemStatus.PENDING) {
             // Check if product requires kitchen preparation
             const product = s.products.find(p => p.id === item.productId);
-            if (product && product.requiresKitchen === false) {
+            if (isDirectServiceProduct(product)) {
               // Beverages/items served directly → skip kitchen, mark as READY
               item.status = OrderItemStatus.READY;
             } else {
@@ -422,7 +423,11 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             items: order.items.filter(it => sentItemIds.has(it.id) && it.status === OrderItemStatus.PREPARING)
           }, s);
 
-          order.status = OrderStatus.PREPARING;
+          const hasPreparingItems = order.items.some(item => item.status === OrderItemStatus.PREPARING);
+          const allItemsReady = order.items.length > 0 && order.items.every(item =>
+            item.status === OrderItemStatus.READY || item.status === OrderItemStatus.DELIVERED
+          );
+          order.status = allItemsReady && !hasPreparingItems ? OrderStatus.READY : OrderStatus.PREPARING;
           order.kitchenSentAt = now;
           order.updatedAt = now;
         } else {
@@ -452,13 +457,19 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           order.items.forEach(it => {
             if (it.status === OrderItemStatus.PENDING) {
               const product = s.products.find(p => p.id === it.productId);
-              if (product && product.requiresKitchen === false) {
+              if (isDirectServiceProduct(product)) {
                 it.status = OrderItemStatus.READY;
               } else {
                 it.status = OrderItemStatus.PREPARING;
               }
             }
           });
+
+          const hasPreparingItems = order.items.some(item => item.status === OrderItemStatus.PREPARING);
+          const allItemsReady = order.items.length > 0 && order.items.every(item =>
+            item.status === OrderItemStatus.READY || item.status === OrderItemStatus.DELIVERED
+          );
+          order.status = allItemsReady && !hasPreparingItems ? OrderStatus.READY : OrderStatus.PREPARING;
           
           deductStockForOrder(order, s);
         }
@@ -477,7 +488,11 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         if (order) {
           const item = order.items.find(it => it.id === itemId);
           if (item) {
-            item.status = status as OrderItemStatus;
+            const product = s.products.find(p => p.id === item.productId);
+            const requestedStatus = status as OrderItemStatus;
+            item.status = isDirectServiceProduct(product) && requestedStatus === OrderItemStatus.PREPARING
+              ? OrderItemStatus.READY
+              : requestedStatus;
             order.updatedAt = new Date().toISOString();
           }
 
