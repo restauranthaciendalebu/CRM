@@ -43,6 +43,7 @@ export enum PaymentMethod {
   DEBIT = "DEBIT",
   CREDIT = "CREDIT",
   TRANSFER = "TRANSFER",
+  ACCOUNT = "ACCOUNT",
 }
 
 export enum ReservationStatus {
@@ -150,6 +151,12 @@ export interface Customer {
   allergies: string[];
   points: number;
   notes?: string;
+  isCreditAuthorized?: boolean;
+  creditLabel?: "OWNER" | "STAFF" | "FAMILY" | "CUSTOMER" | "OTHER";
+  creditLimit?: number;
+  creditNotes?: string;
+  creditAuthorizedBy?: string;
+  creditAuthorizedAt?: string;
 }
 
 export interface CustomerLoyaltyTx {
@@ -178,6 +185,8 @@ export interface Payment {
   method: PaymentMethod;
   tip: number;
   discount: number;
+  creditCustomerId?: string;
+  creditCustomerName?: string;
   createdAt: string;
 }
 

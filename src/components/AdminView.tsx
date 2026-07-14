@@ -9,6 +9,7 @@ import {
   CustomerLoyaltyTx, 
   Promotion, 
   Payment,
+  PaymentMethod,
   User,
   Role
 } from "../types";
@@ -111,6 +112,14 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   // CRM action state
   const [crmSearch, setCrmSearch] = useState("");
   const [selectedCrmCustomer, setSelectedCrmCustomer] = useState<Customer | null>(null);
+  const [crmName, setCrmName] = useState("");
+  const [crmPhone, setCrmPhone] = useState("");
+  const [crmEmail, setCrmEmail] = useState("");
+  const [crmCreditLabel, setCrmCreditLabel] = useState<Customer["creditLabel"]>("CUSTOMER");
+  const [crmCreditLimit, setCrmCreditLimit] = useState(0);
+  const [crmCreditNotes, setCrmCreditNotes] = useState("");
+  const [crmError, setCrmError] = useState("");
+  const [isCrmSaving, setIsCrmSaving] = useState(false);
 
   // Date filters for Historial de Boletas
   const [boletasPeriod, setBoletasPeriod] = useState<string>("all"); // "today", "yesterday", "7days", "30days", "all", "custom"
@@ -127,6 +136,97 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   }, []);
 
   const formatCLP = (val: number) => "$" + Math.round(val).toLocaleString("es-CL");
+  const creditLabelText = (label?: Customer["creditLabel"]) => {
+    const labels: Record<string, string> = {
+      OWNER: "Dueño",
+      STAFF: "Equipo",
+      FAMILY: "Familiar",
+      CUSTOMER: "Cliente autorizado",
+      OTHER: "Otro",
+    };
+    return labels[label || "CUSTOMER"] || "Cliente autorizado";
+  };
+
+  const getCreditBalance = (customerId?: string) => {
+    if (!customerId) return 0;
+    return (state.payments || [])
+      .filter((p) => p.method === PaymentMethod.ACCOUNT && p.creditCustomerId === customerId)
+      .reduce((sum, p) => sum + p.amount, 0);
+  };
+
+  const resetCrmForm = () => {
+    setCrmName("");
+    setCrmPhone("");
+    setCrmEmail("");
+    setCrmCreditLabel("CUSTOMER");
+    setCrmCreditLimit(0);
+    setCrmCreditNotes("");
+    setCrmError("");
+  };
+
+  const handleCreateCreditCustomer = async () => {
+    if (!crmName.trim() || !crmPhone.trim()) {
+      setCrmError("Nombre y teléfono son obligatorios.");
+      return;
+    }
+    setIsCrmSaving(true);
+    setCrmError("");
+    try {
+      const res = await fetch("/api/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: crmName.trim(),
+          phone: crmPhone.trim(),
+          email: crmEmail.trim(),
+          allergies: [],
+          notes: crmCreditNotes.trim(),
+          isCreditAuthorized: true,
+          creditLabel: crmCreditLabel,
+          creditLimit: Number(crmCreditLimit || 0),
+          creditNotes: crmCreditNotes.trim(),
+          creditAuthorizedBy: activeUser?.name || "Administrador",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCrmError(data.error || "No se pudo crear la cuenta.");
+        return;
+      }
+      resetCrmForm();
+      setSelectedCrmCustomer(data.customer || null);
+      onRefreshState();
+    } catch (e) {
+      setCrmError("Error de conexión.");
+    } finally {
+      setIsCrmSaving(false);
+    }
+  };
+
+  const handleToggleCreditCustomer = async (customer: Customer) => {
+    setIsCrmSaving(true);
+    try {
+      const res = await fetch("/api/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...customer,
+          isCreditAuthorized: !customer.isCreditAuthorized,
+          creditLabel: customer.creditLabel || "CUSTOMER",
+          creditLimit: customer.creditLimit || 0,
+          creditNotes: customer.creditNotes || "",
+          creditAuthorizedBy: activeUser?.name || "Administrador",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSelectedCrmCustomer(data.customer || { ...customer, isCreditAuthorized: !customer.isCreditAuthorized });
+        onRefreshState();
+      }
+    } finally {
+      setIsCrmSaving(false);
+    }
+  };
 
   const renderTrendBadge = (current: number, previous: number) => {
     if (previous <= 0) {
@@ -280,22 +380,24 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
 
   // Filter current period
   const currentPayments = completedPayments.filter(p => isDateInPeriod(p.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
+  const currentPaidPayments = currentPayments.filter(p => p.method !== PaymentMethod.ACCOUNT);
   const currentOrders = allOrders.filter(o => isDateInPeriod(o.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
   const currentClosedOrders = currentOrders.filter(o => o.status === "CLOSED");
 
-  const totalSalesVolume = currentPayments.reduce((sum, p) => sum + p.amount, 0);
-  const totalTipVolume = currentPayments.reduce((sum, p) => sum + p.tip, 0);
+  const totalSalesVolume = currentPaidPayments.reduce((sum, p) => sum + p.amount, 0);
+  const totalTipVolume = currentPaidPayments.reduce((sum, p) => sum + p.tip, 0);
   const totalOrdersCount = currentOrders.length;
   const closedOrdersCount = currentClosedOrders.length;
   const averageTicket = closedOrdersCount > 0 ? Math.round(totalSalesVolume / closedOrdersCount) : 0;
 
   // Filter previous period
   const prevPayments = completedPayments.filter(p => isDateInPreviousPeriod(p.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
+  const prevPaidPayments = prevPayments.filter(p => p.method !== PaymentMethod.ACCOUNT);
   const prevOrders = allOrders.filter(o => isDateInPreviousPeriod(o.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
   const prevClosedOrders = prevOrders.filter(o => o.status === "CLOSED");
 
-  const prevSalesVolume = prevPayments.reduce((sum, p) => sum + p.amount, 0);
-  const prevTipVolume = prevPayments.reduce((sum, p) => sum + p.tip, 0);
+  const prevSalesVolume = prevPaidPayments.reduce((sum, p) => sum + p.amount, 0);
+  const prevTipVolume = prevPaidPayments.reduce((sum, p) => sum + p.tip, 0);
   const prevOrdersCount = prevOrders.length;
   const prevClosedOrdersCount = prevClosedOrders.length;
   const prevAverageTicket = prevClosedOrdersCount > 0 ? Math.round(prevSalesVolume / prevClosedOrdersCount) : 0;
@@ -952,6 +1054,68 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
             {/* Customers list area */}
             <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm md:col-span-1">
               <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider block mb-2">Listado de Clientes</span>
+              <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-3 mb-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Nueva cuenta autorizada</span>
+                  <UserPlus className="w-4 h-4 text-amber-600" />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Nombre"
+                  value={crmName}
+                  onChange={(e) => setCrmName(e.target.value)}
+                  className="w-full bg-white border border-zinc-200 rounded-lg py-2 px-3 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                <input
+                  type="tel"
+                  placeholder="Teléfono o identificador"
+                  value={crmPhone}
+                  onChange={(e) => setCrmPhone(e.target.value)}
+                  className="w-full bg-white border border-zinc-200 rounded-lg py-2 px-3 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                <input
+                  type="email"
+                  placeholder="Email opcional"
+                  value={crmEmail}
+                  onChange={(e) => setCrmEmail(e.target.value)}
+                  className="w-full bg-white border border-zinc-200 rounded-lg py-2 px-3 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={crmCreditLabel}
+                    onChange={(e) => setCrmCreditLabel(e.target.value as Customer["creditLabel"])}
+                    className="bg-white border border-zinc-200 rounded-lg py-2 px-2 text-xs focus:outline-none"
+                  >
+                    <option value="OWNER">Dueño</option>
+                    <option value="STAFF">Equipo</option>
+                    <option value="FAMILY">Familiar</option>
+                    <option value="CUSTOMER">Cliente</option>
+                    <option value="OTHER">Otro</option>
+                  </select>
+                  <input
+                    type="number"
+                    placeholder="Límite $"
+                    value={crmCreditLimit || ""}
+                    onChange={(e) => setCrmCreditLimit(Number(e.target.value))}
+                    className="bg-white border border-zinc-200 rounded-lg py-2 px-2 text-xs focus:outline-none"
+                  />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Notas internas opcionales"
+                  value={crmCreditNotes}
+                  onChange={(e) => setCrmCreditNotes(e.target.value)}
+                  className="w-full bg-white border border-zinc-200 rounded-lg py-2 px-3 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
+                />
+                {crmError && <p className="text-[10px] font-bold text-red-600">{crmError}</p>}
+                <button
+                  onClick={handleCreateCreditCustomer}
+                  disabled={isCrmSaving}
+                  className="w-full bg-zinc-900 hover:bg-amber-600 disabled:bg-zinc-300 text-white font-extrabold py-2.5 rounded-lg text-xs transition-colors cursor-pointer"
+                >
+                  Crear y autorizar crédito
+                </button>
+              </div>
               <div className="relative mb-3">
                 <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -979,10 +1143,20 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                       <div>
                         <span className="font-extrabold block">{c.name}</span>
                         <span className="text-zinc-400 text-[10px]">{c.phone}</span>
+                        {c.isCreditAuthorized && (
+                          <span className="block text-[9px] text-emerald-700 font-black uppercase mt-0.5">
+                            Cuenta: {creditLabelText(c.creditLabel)}
+                          </span>
+                        )}
                       </div>
-                      <span className="bg-amber-500 text-zinc-950 font-black px-1.5 py-0.5 rounded text-[10px]">
-                        {c.points} pts
-                      </span>
+                      <div className="text-right">
+                        <span className="bg-amber-500 text-zinc-950 font-black px-1.5 py-0.5 rounded text-[10px] block">
+                          {c.points} pts
+                        </span>
+                        {getCreditBalance(c.id) > 0 && (
+                          <span className="text-red-600 font-black text-[10px] block mt-1">{formatCLP(getCreditBalance(c.id))}</span>
+                        )}
+                      </div>
                     </button>
                   ))}
               </div>
@@ -1001,6 +1175,39 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                       <span className="text-[10px] uppercase font-bold block">Puntos Disponibles</span>
                       <strong className="text-lg font-black">{selectedCrmCustomer.points}</strong>
                     </div>
+                  </div>
+
+                  <div className={`border rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                    selectedCrmCustomer.isCreditAuthorized
+                      ? "bg-emerald-50 border-emerald-200"
+                      : "bg-zinc-50 border-zinc-100"
+                  }`}>
+                    <div>
+                      <span className={`text-[10px] uppercase font-black tracking-wider ${
+                        selectedCrmCustomer.isCreditAuthorized ? "text-emerald-700" : "text-zinc-400"
+                      }`}>
+                        {selectedCrmCustomer.isCreditAuthorized ? "Crédito autorizado" : "Sin crédito autorizado"}
+                      </span>
+                      <div className="mt-1 flex flex-wrap gap-2 text-[11px] font-bold">
+                        <span>{creditLabelText(selectedCrmCustomer.creditLabel)}</span>
+                        <span>Límite: {selectedCrmCustomer.creditLimit ? formatCLP(selectedCrmCustomer.creditLimit) : "Sin límite definido"}</span>
+                        <span>Saldo a cuenta: {formatCLP(getCreditBalance(selectedCrmCustomer.id))}</span>
+                      </div>
+                      {selectedCrmCustomer.creditNotes && (
+                        <p className="text-[11px] text-zinc-500 mt-1">{selectedCrmCustomer.creditNotes}</p>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => handleToggleCreditCustomer(selectedCrmCustomer)}
+                      disabled={isCrmSaving}
+                      className={`px-4 py-2.5 rounded-xl text-xs font-extrabold transition-colors cursor-pointer ${
+                        selectedCrmCustomer.isCreditAuthorized
+                          ? "bg-white border border-emerald-200 text-emerald-800 hover:bg-emerald-100"
+                          : "bg-zinc-900 text-white hover:bg-amber-600"
+                      }`}
+                    >
+                      {selectedCrmCustomer.isCreditAuthorized ? "Bloquear crédito" : "Autorizar crédito"}
+                    </button>
                   </div>
 
                   {/* Customer history list */}

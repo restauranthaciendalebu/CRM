@@ -13,7 +13,8 @@ import {
   ShiftStatus,
   Order,
   OrderItem,
-  Table
+  Table,
+  Customer
 } from "./types";
 import { DEMO_STATE } from "./demoState";
 
@@ -513,12 +514,28 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     if (orderCloseMatch && method === "POST") {
       const id = orderCloseMatch[1];
       const { payments, customerPhone, totalAmount, discount, tip } = body;
+      let errorMsg = "";
 
       const updated = await updateState(s => {
         const order = s.orders.find(o => o.id === id);
-        if (!order) return;
+        if (!order) {
+          errorMsg = "Orden no encontrada";
+          return;
+        }
+
+        const accountPayment = payments.find((pay: any) => pay.method === PaymentMethod.ACCOUNT);
+        let accountCustomer: Customer | null = null;
+        if (accountPayment) {
+          accountCustomer = s.customers.find(c => c.id === accountPayment.creditCustomerId || c.phone === customerPhone) || null;
+          if (!accountCustomer || !accountCustomer.isCreditAuthorized) {
+            errorMsg = "La cuenta seleccionada no está autorizada para crédito";
+            return;
+          }
+          order.customerPhone = accountCustomer.phone;
+        }
 
         payments.forEach((pay: any) => {
+          const creditCustomer = pay.method === PaymentMethod.ACCOUNT ? accountCustomer : null;
           s.payments.push({
             id: "pay_" + Math.random().toString(36).substring(2, 11),
             orderId: id,
@@ -526,6 +543,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             method: pay.method as PaymentMethod,
             tip: pay.tip || 0,
             discount: pay.discount || 0,
+            creditCustomerId: creditCustomer?.id,
+            creditCustomerName: creditCustomer?.name,
             createdAt: new Date().toISOString()
           });
         });
@@ -538,8 +557,9 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           table.status = TableStatus.FREE;
         }
 
-        if (customerPhone) {
-          const customer = s.customers.find(c => c.phone === customerPhone);
+        const loyaltyPhone = accountCustomer?.phone || customerPhone;
+        if (loyaltyPhone) {
+          const customer = s.customers.find(c => c.phone === loyaltyPhone);
           if (customer) {
             const earnedPoints = Math.floor((totalAmount - (discount || 0)) / 100);
             if (earnedPoints > 0) {
@@ -557,12 +577,27 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         }
       });
 
+      if (errorMsg) {
+        return createResponse({ error: errorMsg }, 400);
+      }
       return createResponse({ success: true, state: updated });
     }
 
     // 10. Customer loyalty actions
     if (path === "/api/customers" && method === "POST") {
-      const { name, phone, email, birthDate, allergies, notes } = body;
+      const {
+        name,
+        phone,
+        email,
+        birthDate,
+        allergies,
+        notes,
+        isCreditAuthorized,
+        creditLabel,
+        creditLimit,
+        creditNotes,
+        creditAuthorizedBy,
+      } = body;
       let customer: any = null;
 
       await updateState(s => {
@@ -573,6 +608,14 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           existing.birthDate = birthDate || existing.birthDate;
           existing.allergies = allergies || existing.allergies;
           existing.notes = notes || existing.notes;
+          if (typeof isCreditAuthorized === "boolean") {
+            existing.isCreditAuthorized = isCreditAuthorized;
+            existing.creditAuthorizedAt = isCreditAuthorized ? new Date().toISOString() : "";
+            existing.creditAuthorizedBy = isCreditAuthorized ? (creditAuthorizedBy || "Administrador") : "";
+          }
+          if (creditLabel) existing.creditLabel = creditLabel;
+          if (typeof creditLimit === "number") existing.creditLimit = creditLimit;
+          if (typeof creditNotes === "string") existing.creditNotes = creditNotes;
           customer = existing;
         } else {
           customer = {
@@ -583,7 +626,13 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             birthDate: birthDate || "",
             allergies: allergies || [],
             points: 100,
-            notes: notes || ""
+            notes: notes || "",
+            isCreditAuthorized: !!isCreditAuthorized,
+            creditLabel: creditLabel || "CUSTOMER",
+            creditLimit: Number(creditLimit || 0),
+            creditNotes: creditNotes || "",
+            creditAuthorizedBy: isCreditAuthorized ? (creditAuthorizedBy || "Administrador") : "",
+            creditAuthorizedAt: isCreditAuthorized ? new Date().toISOString() : ""
           };
           s.customers.push(customer);
           s.loyaltyTxs.push({

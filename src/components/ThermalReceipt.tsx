@@ -62,6 +62,7 @@ export function printThermalReceipt({ order, state, payments, waiterName }: Ther
       [PaymentMethod.CREDIT]: "T. Crédito",
       [PaymentMethod.DEBIT]: "T. Débito",
       [PaymentMethod.TRANSFER]: "Transferencia",
+      [PaymentMethod.ACCOUNT]: "Cuenta autorizada",
     };
     return labels[method] || method;
   };

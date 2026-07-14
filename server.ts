@@ -439,12 +439,28 @@ async function startServer() {
       return res.status(400).json({ error: "Payments data is required" });
     }
 
+    let errorMsg = "";
     LocalDb.updateState(state => {
       const order = state.orders.find(o => o.id === id);
-      if (!order) return;
+      if (!order) {
+        errorMsg = "Orden no encontrada";
+        return;
+      }
+
+      const accountPayment = payments.find(pay => pay.method === PaymentMethod.ACCOUNT);
+      let accountCustomer = null as null | typeof state.customers[number];
+      if (accountPayment) {
+        accountCustomer = state.customers.find(c => c.id === accountPayment.creditCustomerId || c.phone === customerPhone) || null;
+        if (!accountCustomer || !accountCustomer.isCreditAuthorized) {
+          errorMsg = "La cuenta seleccionada no está autorizada para crédito";
+          return;
+        }
+        order.customerPhone = accountCustomer.phone;
+      }
 
       // Create Payment records
       payments.forEach(pay => {
+        const creditCustomer = pay.method === PaymentMethod.ACCOUNT ? accountCustomer : null;
         state.payments.push({
           id: "pay_" + Math.random().toString(36).substr(2, 9),
           orderId: id,
@@ -452,6 +468,8 @@ async function startServer() {
           method: pay.method as PaymentMethod,
           tip: pay.tip || 0,
           discount: pay.discount || 0,
+          creditCustomerId: creditCustomer?.id,
+          creditCustomerName: creditCustomer?.name,
           createdAt: new Date().toISOString()
         });
       });
@@ -466,8 +484,9 @@ async function startServer() {
       }
 
       // Loyalty points management (Chile CLP format: 1 point per $100 CLP spent)
-      if (customerPhone) {
-        const customer = state.customers.find(c => c.phone === customerPhone);
+      const loyaltyPhone = accountCustomer?.phone || customerPhone;
+      if (loyaltyPhone) {
+        const customer = state.customers.find(c => c.phone === loyaltyPhone);
         if (customer) {
           // Calculate points earned (1 point per 100 CLP of ticket total)
           const earnedPoints = Math.floor((totalAmount - (discount || 0)) / 100);
@@ -486,12 +505,27 @@ async function startServer() {
       }
     });
 
+    if (errorMsg) {
+      return res.status(400).json({ error: errorMsg });
+    }
     res.json(sanitizeForClient({ success: true, state: LocalDb.getState() }));
   });
 
   // 10. Customer loyalty actions
   app.post("/api/customers", (req, res) => {
-    const { name, phone, email, birthDate, allergies, notes } = req.body;
+    const {
+      name,
+      phone,
+      email,
+      birthDate,
+      allergies,
+      notes,
+      isCreditAuthorized,
+      creditLabel,
+      creditLimit,
+      creditNotes,
+      creditAuthorizedBy,
+    } = req.body;
     if (!name || !phone) {
       return res.status(400).json({ error: "Nombre y teléfono son obligatorios" });
     }
@@ -505,6 +539,14 @@ async function startServer() {
         existing.birthDate = birthDate || existing.birthDate;
         existing.allergies = allergies || existing.allergies;
         existing.notes = notes || existing.notes;
+        if (typeof isCreditAuthorized === "boolean") {
+          existing.isCreditAuthorized = isCreditAuthorized;
+          existing.creditAuthorizedAt = isCreditAuthorized ? new Date().toISOString() : "";
+          existing.creditAuthorizedBy = isCreditAuthorized ? (creditAuthorizedBy || "Administrador") : "";
+        }
+        if (creditLabel) existing.creditLabel = creditLabel;
+        if (typeof creditLimit === "number") existing.creditLimit = creditLimit;
+        if (typeof creditNotes === "string") existing.creditNotes = creditNotes;
         customer = existing;
       } else {
         customer = {
@@ -515,7 +557,13 @@ async function startServer() {
           birthDate: birthDate || "",
           allergies: allergies || [],
           points: 100, // 100 points signup bonus
-          notes: notes || ""
+          notes: notes || "",
+          isCreditAuthorized: !!isCreditAuthorized,
+          creditLabel: creditLabel || "CUSTOMER",
+          creditLimit: Number(creditLimit || 0),
+          creditNotes: creditNotes || "",
+          creditAuthorizedBy: isCreditAuthorized ? (creditAuthorizedBy || "Administrador") : "",
+          creditAuthorizedAt: isCreditAuthorized ? new Date().toISOString() : ""
         };
         state.customers.push(customer);
         state.loyaltyTxs.push({

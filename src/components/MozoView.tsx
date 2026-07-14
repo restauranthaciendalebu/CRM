@@ -82,6 +82,7 @@ export default function MozoView({
   const [appliedDiscount, setAppliedDiscount] = useState(0);
   const [tipPercent, setTipPercent] = useState(10); // 10% default
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
+  const [billingCreditCustomerId, setBillingCreditCustomerId] = useState("");
   const [billingSuccess, setBillingSuccess] = useState(false);
 
   // Shift Management State
@@ -156,6 +157,8 @@ export default function MozoView({
     ? state.orders.find(o => o.tableId === selectedTable.id && o.status !== OrderStatus.CLOSED)
     : null;
   const hasPendingKitchenItems = activeOrder?.items.some((it) => it.status === OrderItemStatus.PENDING) ?? false;
+  const authorizedCreditCustomers = state.customers.filter((c) => c.isCreditAuthorized);
+  const selectedBillingCreditCustomer = authorizedCreditCustomers.find((c) => c.id === billingCreditCustomerId);
 
   const openAddItemsModal = () => {
     setWaiterSearchTerm("");
@@ -325,6 +328,10 @@ export default function MozoView({
 
   const handleCloseBillSubmit = async () => {
     if (!activeOrder) return;
+    if (paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer) {
+      showBanner("Selecciona una cuenta autorizada para cargar el consumo.", "error");
+      return;
+    }
     const orderTotal = calculateActiveOrderTotal();
     const discountAmount = Math.round(orderTotal * (appliedDiscount / 100));
     const tipAmount = Math.round(orderTotal * (tipPercent / 100));
@@ -338,6 +345,7 @@ export default function MozoView({
         paymentsPayload.push({
           amount: amountPerPart,
           method: paymentMethod,
+          creditCustomerId: paymentMethod === PaymentMethod.ACCOUNT ? selectedBillingCreditCustomer?.id : undefined,
           tip: Math.round(tipAmount / billingSplitParts),
           discount: Math.round(discountAmount / billingSplitParts)
         });
@@ -346,6 +354,7 @@ export default function MozoView({
       paymentsPayload.push({
         amount: billingCustomAmount,
         method: paymentMethod,
+        creditCustomerId: paymentMethod === PaymentMethod.ACCOUNT ? selectedBillingCreditCustomer?.id : undefined,
         tip: tipAmount,
         discount: discountAmount
       });
@@ -363,6 +372,7 @@ export default function MozoView({
       paymentsPayload.push({
         amount: totalToPay,
         method: paymentMethod,
+        creditCustomerId: paymentMethod === PaymentMethod.ACCOUNT ? selectedBillingCreditCustomer?.id : undefined,
         tip: tipAmount,
         discount: discountAmount
       });
@@ -374,7 +384,7 @@ export default function MozoView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           payments: paymentsPayload,
-          customerPhone: activeOrder.customerPhone || undefined,
+          customerPhone: selectedBillingCreditCustomer?.phone || activeOrder.customerPhone || undefined,
           totalAmount: orderTotal,
           discount: discountAmount,
           tip: tipAmount
@@ -399,8 +409,12 @@ export default function MozoView({
           setAppliedDiscount(0);
           setSelectedPromoCode("");
           setTipPercent(10);
+          setBillingCreditCustomerId("");
           onRefreshState();
         }, 5000); // Extended to 5s so user can see success + receipt prints
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showBanner(err.error || "No se pudo cerrar la cuenta.", "error");
       }
     } catch (e) {
       showBanner("Error de conexión al cerrar la boleta", "error");
@@ -978,6 +992,8 @@ export default function MozoView({
                     <button
                       onClick={() => {
                         setIsBillingOpen(true);
+                        setPaymentMethod(PaymentMethod.CASH);
+                        setBillingCreditCustomerId("");
                         setBillingSplitParts(activeOrder.customerCount || 2);
                       }}
                       className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md cursor-pointer"
@@ -1385,10 +1401,14 @@ export default function MozoView({
                           { id: PaymentMethod.DEBIT, name: "💳 Débito" },
                           { id: PaymentMethod.CREDIT, name: "💳 Crédito" },
                           { id: PaymentMethod.TRANSFER, name: "🏦 Transferencia" },
+                          { id: PaymentMethod.ACCOUNT, name: "📒 Cuenta autorizada" },
                         ].map((m) => (
                           <button
                             key={m.id}
-                            onClick={() => setPaymentMethod(m.id)}
+                            onClick={() => {
+                              setPaymentMethod(m.id);
+                              if (m.id !== PaymentMethod.ACCOUNT) setBillingCreditCustomerId("");
+                            }}
                             className={`p-3 border rounded-xl text-xs font-bold transition-all cursor-pointer text-left ${
                               paymentMethod === m.id 
                                 ? "bg-emerald-50 border-emerald-300 text-emerald-900" 
@@ -1399,6 +1419,40 @@ export default function MozoView({
                           </button>
                         ))}
                       </div>
+                      {paymentMethod === PaymentMethod.ACCOUNT && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          className="bg-amber-50 border border-amber-200 rounded-2xl p-3 space-y-2"
+                        >
+                          <label className="text-[10px] font-black text-amber-900 block uppercase">Cargar consumo a</label>
+                          <select
+                            value={billingCreditCustomerId}
+                            onChange={(e) => setBillingCreditCustomerId(e.target.value)}
+                            className="w-full bg-white border border-amber-200 rounded-xl p-2.5 text-xs text-zinc-900 focus:outline-none"
+                          >
+                            <option value="">Seleccionar cuenta autorizada</option>
+                            {authorizedCreditCustomers.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name} · {c.phone}
+                              </option>
+                            ))}
+                          </select>
+                          {authorizedCreditCustomers.length === 0 ? (
+                            <p className="text-[10px] text-red-600 font-bold">
+                              No hay cuentas autorizadas. El administrador debe crearlas en CRM.
+                            </p>
+                          ) : selectedBillingCreditCustomer ? (
+                            <p className="text-[10px] text-amber-900 font-bold">
+                              Autorizado: {selectedBillingCreditCustomer.name}
+                            </p>
+                          ) : (
+                            <p className="text-[10px] text-amber-800">
+                              Solo se puede cargar a personas autorizadas por administración.
+                            </p>
+                          )}
+                        </motion.div>
+                      )}
                     </div>
                   </>
                 )}
@@ -1415,9 +1469,14 @@ export default function MozoView({
                   </button>
                   <button
                     onClick={handleCloseBillSubmit}
-                    className="flex-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md transition-colors cursor-pointer"
+                    disabled={paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer}
+                    className={`flex-2 text-white font-extrabold py-3 rounded-xl text-xs shadow-md transition-colors ${
+                      paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer
+                        ? "bg-zinc-300 cursor-not-allowed"
+                        : "bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
+                    }`}
                   >
-                    Confirmar Cobro
+                    {paymentMethod === PaymentMethod.ACCOUNT ? "Confirmar cargo a cuenta" : "Confirmar Cobro"}
                   </button>
                 </div>
               )}
