@@ -112,6 +112,14 @@ export default function MozoView({
     setTimeout(() => setBannerMsg(null), 3000);
   };
 
+  // Firestore direct mode already updates the screen through onSnapshot.
+  // Keep the manual refresh only for the server/polling deployment.
+  const refreshStateIfNeeded = () => {
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API !== "true") {
+      onRefreshState();
+    }
+  };
+
   // 1. PIN LOCK LOGIC
   const handlePinKeyPress = (num: string) => {
     if (pinInput.length < 4) {
@@ -183,7 +191,7 @@ export default function MozoView({
       if (res.ok) {
         setIsOpeningTable(false);
         showBanner("Mesa abierta con éxito.");
-        onRefreshState();
+        refreshStateIfNeeded();
         // Automatically select table to view
         const updatedState = state;
         const updatedTbl = updatedState.tables.find(t => t.id === selectedTable.id);
@@ -222,7 +230,7 @@ export default function MozoView({
         setWaiterCart([]);
         setIsAddingItems(false);
         showBanner("Productos agregados a la comanda.");
-        onRefreshState();
+        refreshStateIfNeeded();
       }
     } catch (e) {
       showBanner("Error de conexión", "error");
@@ -285,7 +293,7 @@ export default function MozoView({
       });
       if (res.ok) {
         showBanner("Comanda del cliente aprobada con éxito.");
-        onRefreshState();
+        refreshStateIfNeeded();
       }
     } catch (e) {
       showBanner("Error al aprobar.", "error");
@@ -299,7 +307,7 @@ export default function MozoView({
         method: "POST"
       });
       if (res.ok) {
-        onRefreshState();
+        refreshStateIfNeeded();
       }
     } catch (e) {
       console.error(e);
@@ -406,7 +414,7 @@ export default function MozoView({
           setSelectedPromoCode("");
           setTipPercent(10);
           setBillingCreditCustomerId("");
-          onRefreshState();
+          refreshStateIfNeeded();
         }, 5000); // Extended to 5s so user can see success + receipt prints
       } else {
         const err = await res.json().catch(() => ({}));
@@ -427,7 +435,7 @@ export default function MozoView({
       });
       if (res.ok) {
         showBanner("Turno de caja abierto.");
-        onRefreshState();
+        refreshStateIfNeeded();
       }
     } catch (e) {
       showBanner("Error de conexión", "error");
@@ -443,7 +451,7 @@ export default function MozoView({
       });
       if (res.ok) {
         showBanner("Turno cerrado con éxito. Arqueo completado.");
-        onRefreshState();
+        refreshStateIfNeeded();
       }
     } catch (e) {
       showBanner("Error de conexión", "error");

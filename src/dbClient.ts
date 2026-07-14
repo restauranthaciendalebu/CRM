@@ -200,7 +200,9 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         return createResponse({ error: "PIN inválido" }, 401);
       }
       clearAuthFailures();
-      await updateState(s => {
+      // The audit record is useful, but it should not block the user's access.
+      // The realtime listener will publish the audit update when it completes.
+      void updateState(s => {
         if (!s.auditLogs) s.auditLogs = [];
         s.auditLogs.push({
           id: "audit_" + Math.random().toString(36).substring(2, 11),
@@ -210,6 +212,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           details: `${user.name} inició sesión en el sistema.`,
           createdAt: new Date().toISOString()
         });
+      }).catch((error) => {
+        console.error("No se pudo guardar la auditoría de inicio de sesión", error);
       });
       return createResponse({ ...user, pin: "" });
     }
