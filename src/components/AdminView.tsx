@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import QRGenerator from "./QRGenerator";
+import { printThermalReceipt } from "./ThermalReceipt";
 import { 
   RestaurantState, 
   Product, 
@@ -38,6 +39,7 @@ import {
   FileText,
   RefreshCw,
   FileDown,
+  Printer,
   Shield,
   Lock,
   Key,
@@ -1468,6 +1470,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                     .map((order) => {
                       const isVoided = (order as any).voided;
                       const orderPayment = state.payments.find(p => p.orderId === order.id);
+                      const orderPayments = state.payments.filter(p => p.orderId === order.id);
                       
                       const subtotal = order.items.reduce((sum, it) => {
                         const p = state.products.find(prod => prod.id === it.productId);
@@ -1539,25 +1542,37 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                               </div>
 
                               {!isVoided && (
-                                <button
-                                  onClick={async () => {
-                                    const reason = window.confirm("¿Seguro que deseas ANULAR este pedido? Se reembolsará el stock completo al inventario, se cancelarán las transacciones financieras y se descontarán los puntos del cliente.");
-                                    if (!reason) return;
+                                <div className="flex flex-wrap justify-end gap-2">
+                                  <button
+                                    onClick={() => printThermalReceipt({
+                                      order,
+                                      state,
+                                      payments: orderPayments,
+                                    })}
+                                    className="flex items-center gap-1 bg-zinc-900 hover:bg-zinc-700 text-white font-extrabold px-2.5 py-1.5 rounded-lg text-[10px] border border-zinc-800 transition-colors cursor-pointer"
+                                  >
+                                    <Printer className="w-3.5 h-3.5" /> Imprimir Boleta
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      const reason = window.confirm("¿Seguro que deseas ANULAR este pedido? Se reembolsará el stock completo al inventario, se cancelarán las transacciones financieras y se descontarán los puntos del cliente.");
+                                      if (!reason) return;
 
-                                    const res = await fetch(`/api/orders/${order.id}/void`, {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ operatorName: "Administrador" })
-                                    });
-                                    if (res.ok) {
-                                      alert("Pedido anulado y stock devuelto con éxito.");
-                                      onRefreshState();
-                                    }
-                                  }}
-                                  className="flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-700 font-extrabold px-2.5 py-1.5 rounded-lg text-[10px] border border-red-200 transition-colors cursor-pointer"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" /> Anular Venta
-                                </button>
+                                      const res = await fetch(`/api/orders/${order.id}/void`, {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ operatorName: "Administrador" })
+                                      });
+                                      if (res.ok) {
+                                        alert("Pedido anulado y stock devuelto con éxito.");
+                                        onRefreshState();
+                                      }
+                                    }}
+                                    className="flex items-center gap-1 bg-red-50 hover:bg-red-100 text-red-700 font-extrabold px-2.5 py-1.5 rounded-lg text-[10px] border border-red-200 transition-colors cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" /> Anular Venta
+                                  </button>
+                                </div>
                               )}
                             </div>
                           </div>
