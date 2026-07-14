@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { RestaurantState, Product, Category, OrderStatus } from "../types";
+import { RestaurantState, Product, Category, OrderStatus, PaymentMethod } from "../types";
 import {
   Bell,
   Receipt,
@@ -36,6 +36,7 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
   const [notice, setNotice] = useState<{ msg: string; kind: NoticeKind } | null>(null);
   const [billRequested, setBillRequested] = useState(false);
   const [waiterJustCalled, setWaiterJustCalled] = useState(false);
+  const [showReceipt, setShowReceipt] = useState(false);
 
   const showNotice = (msg: string, kind: NoticeKind = "info") => {
     setNotice({ msg, kind });
@@ -51,6 +52,13 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
   const hasDeliveredOrder = tableOrders.some(
     (o) => o.status === OrderStatus.DELIVERED || o.status === OrderStatus.CLOSED
   );
+  const closedOrder = [...tableOrders]
+    .filter((order) => order.status === OrderStatus.CLOSED)
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+  const closedOrderPayments = closedOrder
+    ? state.payments.filter((payment) => payment.orderId === closedOrder.id)
+    : [];
+  const closedOrderTotal = closedOrderPayments.reduce((sum, payment) => sum + payment.amount, 0);
 
   // Derived state: check if there's a pending (unresolved) CALL_WAITER notification for this table
   const hasPendingWaiterCall = state.notifications.some(
@@ -62,7 +70,20 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
   const hasPendingBillRequest = state.notifications.some(
     (n) => n.tableNumber === tableNumber && n.type === "REQUEST_BILL" && !n.resolved
   );
-  const billDisabled = !hasDeliveredOrder || billRequested || hasPendingBillRequest;
+  const billDisabled = closedOrder ? false : !hasDeliveredOrder || billRequested || hasPendingBillRequest;
+
+  const paymentMethodLabel = (method: PaymentMethod) => {
+    const labels: Record<PaymentMethod, string> = {
+      [PaymentMethod.CASH]: "Efectivo",
+      [PaymentMethod.DEBIT]: "Tarjeta de débito",
+      [PaymentMethod.CREDIT]: "Tarjeta de crédito",
+      [PaymentMethod.TRANSFER]: "Transferencia",
+      [PaymentMethod.ACCOUNT]: "Cuenta autorizada",
+    };
+    return labels[method] || method;
+  };
+
+  const formatReceiptPrice = (value: number) => `$${value.toLocaleString("es-CL")}`;
 
   // Filter products
   const filteredProducts = state.products.filter((p) => {
@@ -471,18 +492,22 @@ ${menuHTML}
           </button>
 
           <button
-            onClick={handleRequestBill}
+            onClick={closedOrder ? () => setShowReceipt(true) : handleRequestBill}
             disabled={billDisabled}
             className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm transition-all cursor-pointer ${
-              billRequested || hasPendingBillRequest
-                ? "bg-emerald-900/50 text-emerald-400 border border-emerald-500/20"
+              closedOrder
+              ? "bg-emerald-600 text-white border border-emerald-500"
+              : billRequested || hasPendingBillRequest
+              ? "bg-emerald-900/50 text-emerald-400 border border-emerald-500/20"
                 : !hasDeliveredOrder
                 ? "bg-zinc-800/50 text-zinc-700 border border-zinc-800"
                 : "bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700/50 active:scale-[0.97]"
             }`}
           >
             <Receipt className="w-4 h-4" />
-            {billRequested || hasPendingBillRequest
+            {closedOrder
+              ? "Ver boleta"
+              : billRequested || hasPendingBillRequest
               ? "Cuenta solicitada ✓"
               : !hasDeliveredOrder
               ? "Sin pedidos aún"
@@ -495,6 +520,58 @@ ${menuHTML}
           Restaurant Hacienda · Carta Digital · Mesa {tableNumber}
         </p>
       </div>
+
+      {showReceipt && closedOrder && (
+        <div className="fixed inset-0 z-[80] bg-black/70 p-4 flex items-end sm:items-center justify-center">
+          <div className="w-full max-w-md max-h-[88vh] overflow-y-auto bg-white text-zinc-900 rounded-3xl shadow-2xl p-5">
+            <div className="flex items-start justify-between border-b border-zinc-200 pb-4">
+              <div>
+                <span className="text-[10px] uppercase tracking-[3px] text-amber-700 font-black">Boleta de consumo</span>
+                <h2 className="text-xl font-black mt-1">Restaurant Hacienda</h2>
+                <p className="text-xs text-zinc-500 mt-1">Mesa {tableNumber} · {new Date(closedOrder.updatedAt).toLocaleString("es-CL")}</p>
+              </div>
+              <button onClick={() => setShowReceipt(false)} className="p-2 text-zinc-500 hover:text-zinc-900" aria-label="Cerrar boleta">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="py-4 space-y-3">
+              {closedOrder.items.map((item) => {
+                const product = state.products.find((candidate) => candidate.id === item.productId);
+                if (!product) return null;
+                const modifiers = item.selectedModifiers?.reduce((sum, modifier) => sum + modifier.extraPrice, 0) || 0;
+                return (
+                  <div key={item.id} className="flex justify-between gap-3 text-sm">
+                    <span><strong>{item.quantity}x</strong> {product.name}</span>
+                    <span className="font-bold whitespace-nowrap">{formatReceiptPrice((product.price + modifiers) * item.quantity)}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="border-t border-zinc-200 pt-3 space-y-2">
+              {closedOrderPayments.map((payment) => (
+                <div key={payment.id} className="flex justify-between text-xs text-zinc-500">
+                  <span>{paymentMethodLabel(payment.method)}</span>
+                  <span>{formatReceiptPrice(payment.amount)}</span>
+                </div>
+              ))}
+              <div className="flex justify-between text-lg font-black pt-2">
+                <span>Total</span>
+                <span>{formatReceiptPrice(closedOrderTotal)}</span>
+              </div>
+            </div>
+
+            <p className="text-center text-[10px] text-zinc-400 mt-5">Gracias por preferir Restaurant Hacienda</p>
+            <button
+              onClick={() => window.print()}
+              className="w-full mt-4 bg-zinc-900 text-white rounded-xl py-3 font-bold text-sm"
+            >
+              Imprimir o guardar PDF
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Scroll to top ── */}
       {showScrollTop && (
