@@ -40,13 +40,32 @@ export function subscribeToState(callback: (state: RestaurantState) => void) {
   };
 }
 
+function publishState(state: RestaurantState) {
+  currentCachedState = state;
+  stateListeners.forEach(listener => listener(sanitizeForClient(state)));
+}
+
+// Applies a small UI-only change while the server transaction is in flight.
+// The next Firestore snapshot remains the source of truth.
+export function applyLocalStateUpdate(mutator: (state: RestaurantState) => void) {
+  if (!currentCachedState) return;
+  const nextState = JSON.parse(JSON.stringify(currentCachedState)) as RestaurantState;
+  mutator(nextState);
+  publishState(nextState);
+}
+
+export async function refreshStateFromServer() {
+  const snap = await getDoc(STATE_DOC_REF);
+  if (snap.exists()) {
+    publishState(snap.data() as RestaurantState);
+  }
+}
+
 // Automatically listen to firestore state document in real time
 onSnapshot(STATE_DOC_REF, async (docSnap) => {
   if (docSnap.exists()) {
     const data = docSnap.data() as RestaurantState;
-    currentCachedState = data;
-
-    stateListeners.forEach(listener => listener(sanitizeForClient(data)));
+    publishState(data);
   } else {
     // Database hasn't been initialized yet. Save the default initial state
     console.log("No remote state found, initializing Firestore with default schema...");
@@ -89,8 +108,7 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
     transaction.set(STATE_DOC_REF, state);
     return state;
   });
-  currentCachedState = updatedState;
-  stateListeners.forEach(listener => listener(sanitizeForClient(updatedState)));
+  publishState(updatedState);
   return updatedState;
 }
 

@@ -49,6 +49,20 @@ export default function MozoView({
   onLoginSuccess, 
   onLogout 
 }: MozoViewProps) {
+
+  const applyDirectStateUpdate = async (mutator: (state: RestaurantState) => void) => {
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      const client = await import("../dbClient");
+      client.applyLocalStateUpdate(mutator);
+    }
+  };
+
+  const refreshDirectState = async () => {
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      const client = await import("../dbClient");
+      await client.refreshStateFromServer();
+    }
+  };
   
   // PIN Login state
   const [pinInput, setPinInput] = useState("");
@@ -241,6 +255,24 @@ export default function MozoView({
   const handleSendToKitchen = async () => {
     if (!activeOrder || !hasPendingKitchenItems || isSendingKitchen) return;
     setIsSendingKitchen(true);
+    const sentAt = new Date().toISOString();
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        const order = nextState.orders.find((candidate) => candidate.id === activeOrder.id);
+        if (!order) return;
+        order.items.forEach((item) => {
+          if (item.status === OrderItemStatus.PENDING) {
+            const product = nextState.products.find((candidate) => candidate.id === item.productId);
+            item.status = product?.requiresKitchen === false
+              ? OrderItemStatus.READY
+              : OrderItemStatus.PREPARING;
+          }
+        });
+        order.status = OrderStatus.PREPARING;
+        order.kitchenSentAt = sentAt;
+        order.updatedAt = sentAt;
+      });
+    }
     try {
       const res = await fetch(`/api/orders/${activeOrder.id}/send-to-kitchen`, {
         method: "POST"
@@ -249,9 +281,15 @@ export default function MozoView({
         showBanner("Comanda enviada a Cocina.");
       } else {
         const err = await res.json();
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+          await refreshDirectState();
+        }
         showBanner(err.error || "No hay ítems pendientes.", "error");
       }
     } catch (e) {
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+        await refreshDirectState();
+      }
       showBanner("Error de conexión", "error");
     } finally {
       setIsSendingKitchen(false);
@@ -268,14 +306,29 @@ export default function MozoView({
     else return; // Already delivered
 
     setPendingOrderActionIds(prev => [...prev, itemId]);
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        const order = nextState.orders.find((candidate) => candidate.id === activeOrder.id);
+        const item = order?.items.find((candidate) => candidate.id === itemId);
+        if (item) item.status = nextStatus;
+      });
+    }
     try {
       const res = await fetch(`/api/orders/${activeOrder.id}/items/${itemId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus })
       });
-      if (!res.ok) showBanner("No se pudo cambiar el estado.", "error");
+      if (!res.ok) {
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+          await refreshDirectState();
+        }
+        showBanner("No se pudo cambiar el estado.", "error");
+      }
     } catch (e) {
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+        await refreshDirectState();
+      }
       showBanner("Error al cambiar estado.", "error");
     } finally {
       setPendingOrderActionIds(prev => prev.filter(id => id !== itemId));

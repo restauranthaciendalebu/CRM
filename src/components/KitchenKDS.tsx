@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { 
+import {
   RestaurantState, 
   Order, 
   OrderItem, 
@@ -24,6 +24,20 @@ interface KitchenKDSProps {
 }
 
 export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenKDSProps) {
+  const applyDirectStateUpdate = async (mutator: (state: RestaurantState) => void) => {
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      const client = await import("../dbClient");
+      client.applyLocalStateUpdate(mutator);
+    }
+  };
+
+  const refreshDirectState = async () => {
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      const client = await import("../dbClient");
+      await client.refreshStateFromServer();
+    }
+  };
+
   const [filterType, setFilterType] = useState<"all" | "cocina" | "bar">("all");
   const [currentTime, setCurrentTime] = useState(new Date());
   const [pendingItemIds, setPendingItemIds] = useState<string[]>([]);
@@ -88,14 +102,43 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
   const handleUpdateItemStatus = async (orderId: string, itemId: string, nextStatus: OrderItemStatus) => {
     if (pendingItemIds.includes(itemId)) return;
     setPendingItemIds(prev => [...prev, itemId]);
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        const order = nextState.orders.find((candidate) => candidate.id === orderId);
+        const item = order?.items.find((candidate) => candidate.id === itemId);
+        if (!order || !item) return;
+        item.status = nextStatus;
+        order.updatedAt = new Date().toISOString();
+        const allReady = order.items.every((candidate) =>
+          candidate.status === OrderItemStatus.READY || candidate.status === OrderItemStatus.DELIVERED
+        );
+        const allDelivered = order.items.every((candidate) => candidate.status === OrderItemStatus.DELIVERED);
+        const anyPreparing = order.items.some((candidate) => candidate.status === OrderItemStatus.PREPARING);
+        order.status = allDelivered
+          ? OrderStatus.DELIVERED
+          : allReady
+          ? OrderStatus.READY
+          : anyPreparing
+          ? OrderStatus.PREPARING
+          : order.status;
+      });
+    }
     try {
       const res = await fetch(`/api/orders/${orderId}/items/${itemId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
       });
-      if (!res.ok) console.error("No se pudo actualizar el estado del item");
+      if (!res.ok) {
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+          await refreshDirectState();
+        }
+        console.error("No se pudo actualizar el estado del item");
+      }
     } catch (e) {
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+        await refreshDirectState();
+      }
       console.error(e);
     } finally {
       setPendingItemIds(prev => prev.filter(id => id !== itemId));
