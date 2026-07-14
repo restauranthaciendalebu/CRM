@@ -56,7 +56,7 @@ onSnapshot(STATE_DOC_REF, async (docSnap) => {
 
 // Atomic transaction helper for mutating state safely
 async function updateState(mutator: (state: RestaurantState) => void): Promise<RestaurantState> {
-  return await runTransaction(db, async (transaction) => {
+  const updatedState = await runTransaction(db, async (transaction) => {
     const sfDoc = await transaction.get(STATE_DOC_REF);
     let state: RestaurantState;
     if (!sfDoc.exists()) {
@@ -89,6 +89,9 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
     transaction.set(STATE_DOC_REF, state);
     return state;
   });
+  currentCachedState = updatedState;
+  stateListeners.forEach(listener => listener(sanitizeForClient(updatedState)));
+  return updatedState;
 }
 
 // Deduct ingredient stock based on ingredients used in order items
@@ -536,17 +539,22 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
         payments.forEach((pay: any) => {
           const creditCustomer = pay.method === PaymentMethod.ACCOUNT ? accountCustomer : null;
-          s.payments.push({
+          const payment = {
             id: "pay_" + Math.random().toString(36).substring(2, 11),
             orderId: id,
             amount: pay.amount,
             method: pay.method as PaymentMethod,
             tip: pay.tip || 0,
             discount: pay.discount || 0,
-            creditCustomerId: creditCustomer?.id,
-            creditCustomerName: creditCustomer?.name,
             createdAt: new Date().toISOString()
-          });
+          };
+          if (creditCustomer) {
+            Object.assign(payment, {
+              creditCustomerId: creditCustomer.id,
+              creditCustomerName: creditCustomer.name,
+            });
+          }
+          s.payments.push(payment);
         });
 
         order.status = OrderStatus.CLOSED;

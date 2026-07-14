@@ -26,8 +26,10 @@ interface KitchenKDSProps {
 export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenKDSProps) {
   const [filterType, setFilterType] = useState<"all" | "cocina" | "bar">("all");
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [pendingItemIds, setPendingItemIds] = useState<string[]>([]);
 
   useEffect(() => {
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") return;
     // Poll the server state every 3 seconds
     const interval = setInterval(() => {
       onRefreshState();
@@ -84,17 +86,19 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
   };
 
   const handleUpdateItemStatus = async (orderId: string, itemId: string, nextStatus: OrderItemStatus) => {
+    if (pendingItemIds.includes(itemId)) return;
+    setPendingItemIds(prev => [...prev, itemId]);
     try {
       const res = await fetch(`/api/orders/${orderId}/items/${itemId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus }),
       });
-      if (res.ok) {
-        onRefreshState();
-      }
+      if (!res.ok) console.error("No se pudo actualizar el estado del item");
     } catch (e) {
       console.error(e);
+    } finally {
+      setPendingItemIds(prev => prev.filter(id => id !== itemId));
     }
   };
 
@@ -233,6 +237,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                   .map((it) => {
                     const prod = state.products.find((p) => p.id === it.productId);
                     if (!prod) return null;
+                    const isUpdating = pendingItemIds.includes(it.id);
 
                     return (
                       <div key={it.id} className="border-b border-zinc-800/80 pb-3 flex flex-col justify-between gap-2">
@@ -283,25 +288,34 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                           {it.status === OrderItemStatus.PENDING && (
                             <button
                               onClick={() => handleUpdateItemStatus(order.id, it.id, OrderItemStatus.PREPARING)}
-                              className="bg-zinc-800 hover:bg-blue-600 text-white font-bold text-[10px] py-1 px-3 rounded-lg border border-zinc-700 transition-colors cursor-pointer"
+                              disabled={isUpdating}
+                              className={`font-bold text-[10px] py-1 px-3 rounded-lg border transition-colors ${
+                                isUpdating ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" : "bg-zinc-800 hover:bg-blue-600 text-white border-zinc-700 cursor-pointer"
+                              }`}
                             >
-                              Preparar
+                              {isUpdating ? "Actualizando..." : "Preparar"}
                             </button>
                           )}
                           {it.status === OrderItemStatus.PREPARING && (
                             <button
                               onClick={() => handleUpdateItemStatus(order.id, it.id, OrderItemStatus.READY)}
-                              className="bg-zinc-800 hover:bg-emerald-600 text-white font-bold text-[10px] py-1 px-3 rounded-lg border border-zinc-700 transition-colors cursor-pointer"
+                              disabled={isUpdating}
+                              className={`font-bold text-[10px] py-1 px-3 rounded-lg border transition-colors ${
+                                isUpdating ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" : "bg-zinc-800 hover:bg-emerald-600 text-white border-zinc-700 cursor-pointer"
+                              }`}
                             >
-                              Listo / Servir
+                              {isUpdating ? "Actualizando..." : "Listo / Servir"}
                             </button>
                           )}
                           {it.status === OrderItemStatus.READY && (
                             <button
                               onClick={() => handleUpdateItemStatus(order.id, it.id, OrderItemStatus.DELIVERED)}
-                              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white font-bold text-[10px] py-1 px-3 rounded-lg border border-zinc-700 transition-colors cursor-pointer"
+                              disabled={isUpdating}
+                              className={`font-bold text-[10px] py-1 px-3 rounded-lg border transition-colors ${
+                                isUpdating ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" : "bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white border-zinc-700 cursor-pointer"
+                              }`}
                             >
-                              Servido
+                              {isUpdating ? "Actualizando..." : "Servido"}
                             </button>
                           )}
                         </div>

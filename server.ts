@@ -461,17 +461,22 @@ async function startServer() {
       // Create Payment records
       payments.forEach(pay => {
         const creditCustomer = pay.method === PaymentMethod.ACCOUNT ? accountCustomer : null;
-        state.payments.push({
+        const payment = {
           id: "pay_" + Math.random().toString(36).substr(2, 9),
           orderId: id,
           amount: pay.amount,
           method: pay.method as PaymentMethod,
           tip: pay.tip || 0,
           discount: pay.discount || 0,
-          creditCustomerId: creditCustomer?.id,
-          creditCustomerName: creditCustomer?.name,
           createdAt: new Date().toISOString()
-        });
+        };
+        if (creditCustomer) {
+          Object.assign(payment, {
+            creditCustomerId: creditCustomer.id,
+            creditCustomerName: creditCustomer.name,
+          });
+        }
+        state.payments.push(payment);
       });
 
       order.status = OrderStatus.CLOSED;

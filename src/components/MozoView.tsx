@@ -72,6 +72,8 @@ export default function MozoView({
   }>>([]);
   const [waiterSearchTerm, setWaiterSearchTerm] = useState("");
   const [waiterCategoryFilter, setWaiterCategoryFilter] = useState("all");
+  const [pendingOrderActionIds, setPendingOrderActionIds] = useState<string[]>([]);
+  const [isSendingKitchen, setIsSendingKitchen] = useState(false);
 
   // Billing modal
   const [isBillingOpen, setIsBillingOpen] = useState(false);
@@ -229,43 +231,46 @@ export default function MozoView({
 
   // Kitchen direct submit (sends pending to kitchen and triggers ingredient deduction)
   const handleSendToKitchen = async () => {
-    if (!activeOrder || !hasPendingKitchenItems) return;
+    if (!activeOrder || !hasPendingKitchenItems || isSendingKitchen) return;
+    setIsSendingKitchen(true);
     try {
       const res = await fetch(`/api/orders/${activeOrder.id}/send-to-kitchen`, {
         method: "POST"
       });
       if (res.ok) {
         showBanner("Comanda enviada a Cocina.");
-        onRefreshState();
       } else {
         const err = await res.json();
         showBanner(err.error || "No hay ítems pendientes.", "error");
       }
     } catch (e) {
       showBanner("Error de conexión", "error");
+    } finally {
+      setIsSendingKitchen(false);
     }
   };
 
   // Change individual order item status
   const handleUpdateItemStatus = async (itemId: string, currentStatus: OrderItemStatus) => {
-    if (!activeOrder) return;
+    if (!activeOrder || pendingOrderActionIds.includes(itemId)) return;
     let nextStatus: OrderItemStatus;
     if (currentStatus === OrderItemStatus.PENDING) nextStatus = OrderItemStatus.PREPARING;
     else if (currentStatus === OrderItemStatus.PREPARING) nextStatus = OrderItemStatus.READY;
     else if (currentStatus === OrderItemStatus.READY) nextStatus = OrderItemStatus.DELIVERED;
     else return; // Already delivered
 
+    setPendingOrderActionIds(prev => [...prev, itemId]);
     try {
       const res = await fetch(`/api/orders/${activeOrder.id}/items/${itemId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus })
       });
-      if (res.ok) {
-        onRefreshState();
-      }
+      if (!res.ok) showBanner("No se pudo cambiar el estado.", "error");
     } catch (e) {
       showBanner("Error al cambiar estado.", "error");
+    } finally {
+      setPendingOrderActionIds(prev => prev.filter(id => id !== itemId));
     }
   };
 
@@ -336,46 +341,37 @@ export default function MozoView({
     const discountAmount = Math.round(orderTotal * (appliedDiscount / 100));
     const tipAmount = Math.round(orderTotal * (tipPercent / 100));
     const totalToPay = orderTotal - discountAmount + tipAmount;
+    const createPaymentPayload = (amount: number, method: PaymentMethod, tip: number, discount: number) => ({
+      amount,
+      method,
+      tip,
+      discount,
+      ...(method === PaymentMethod.ACCOUNT && selectedBillingCreditCustomer
+        ? { creditCustomerId: selectedBillingCreditCustomer.id }
+        : {}),
+    });
 
     // Build split payments payload
     let paymentsPayload = [];
     if (billingSplitType === "equal") {
       const amountPerPart = Math.round(totalToPay / billingSplitParts);
       for (let i = 0; i < billingSplitParts; i++) {
-        paymentsPayload.push({
-          amount: amountPerPart,
-          method: paymentMethod,
-          creditCustomerId: paymentMethod === PaymentMethod.ACCOUNT ? selectedBillingCreditCustomer?.id : undefined,
-          tip: Math.round(tipAmount / billingSplitParts),
-          discount: Math.round(discountAmount / billingSplitParts)
-        });
+        paymentsPayload.push(createPaymentPayload(
+          amountPerPart,
+          paymentMethod,
+          Math.round(tipAmount / billingSplitParts),
+          Math.round(discountAmount / billingSplitParts)
+        ));
       }
     } else if (billingSplitType === "custom") {
-      paymentsPayload.push({
-        amount: billingCustomAmount,
-        method: paymentMethod,
-        creditCustomerId: paymentMethod === PaymentMethod.ACCOUNT ? selectedBillingCreditCustomer?.id : undefined,
-        tip: tipAmount,
-        discount: discountAmount
-      });
+      paymentsPayload.push(createPaymentPayload(billingCustomAmount, paymentMethod, tipAmount, discountAmount));
       // remaining
       const remaining = totalToPay - billingCustomAmount;
       if (remaining > 0) {
-        paymentsPayload.push({
-          amount: remaining,
-          method: PaymentMethod.CREDIT,
-          tip: 0,
-          discount: 0
-        });
+        paymentsPayload.push(createPaymentPayload(remaining, PaymentMethod.CREDIT, 0, 0));
       }
     } else {
-      paymentsPayload.push({
-        amount: totalToPay,
-        method: paymentMethod,
-        creditCustomerId: paymentMethod === PaymentMethod.ACCOUNT ? selectedBillingCreditCustomer?.id : undefined,
-        tip: tipAmount,
-        discount: discountAmount
-      });
+      paymentsPayload.push(createPaymentPayload(totalToPay, paymentMethod, tipAmount, discountAmount));
     }
 
     try {
@@ -915,6 +911,7 @@ export default function MozoView({
                         {activeOrder.items.map((it) => {
                           const prod = state.products.find(p => p.id === it.productId);
                           if (!prod) return null;
+                          const isUpdating = pendingOrderActionIds.includes(it.id);
                           return (
                             <div key={it.id} className="border-b border-zinc-100 pb-2 text-xs flex justify-between items-start gap-2">
                               <div>
@@ -933,7 +930,11 @@ export default function MozoView({
 
                               <button
                                 onClick={() => handleUpdateItemStatus(it.id, it.status)}
+                                disabled={isUpdating || it.status === OrderItemStatus.DELIVERED}
                                 className={`px-2 py-1 rounded-md font-bold text-[10px] border transition-all cursor-pointer ${
+                                  isUpdating
+                                    ? "bg-zinc-100 border-zinc-200 text-zinc-400 cursor-wait"
+                                    :
                                   it.status === OrderItemStatus.PENDING
                                     ? "bg-zinc-100 border-zinc-200 text-zinc-700 hover:bg-amber-100"
                                     : it.status === OrderItemStatus.PREPARING
@@ -943,10 +944,11 @@ export default function MozoView({
                                     : "bg-zinc-50 border-zinc-200 text-zinc-400 cursor-not-allowed"
                                 }`}
                               >
-                                {it.status === OrderItemStatus.PENDING && "Pendiente"}
-                                {it.status === OrderItemStatus.PREPARING && "Cocinando"}
-                                {it.status === OrderItemStatus.READY && "Entregar"}
-                                {it.status === OrderItemStatus.DELIVERED && "Servido ✔"}
+                                {isUpdating && "Actualizando..."}
+                                {!isUpdating && it.status === OrderItemStatus.PENDING && "Pendiente"}
+                                {!isUpdating && it.status === OrderItemStatus.PREPARING && "Cocinando"}
+                                {!isUpdating && it.status === OrderItemStatus.READY && "Entregar"}
+                                {!isUpdating && it.status === OrderItemStatus.DELIVERED && "Servido ✔"}
                               </button>
                             </div>
                           );
@@ -967,14 +969,14 @@ export default function MozoView({
                     </button>
                     <button
                       onClick={handleSendToKitchen}
-                      disabled={!hasPendingKitchenItems}
+                      disabled={!hasPendingKitchenItems || isSendingKitchen}
                       className={`font-bold p-3 rounded-xl text-xs flex items-center justify-center gap-1 shadow-sm transition-all ${
-                        hasPendingKitchenItems
+                        hasPendingKitchenItems && !isSendingKitchen
                           ? "bg-zinc-950 hover:bg-amber-600 text-white cursor-pointer"
                           : "bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed"
                       }`}
                     >
-                      {hasPendingKitchenItems ? "Enviar a Cocina" : "Sin nuevos platos"}
+                      {isSendingKitchen ? "Enviando..." : hasPendingKitchenItems ? "Enviar a Cocina" : "Sin nuevos platos"}
                     </button>
                   </div>
                 </div>
