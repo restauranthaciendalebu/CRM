@@ -25,7 +25,6 @@ export default defineConfig(() => {
         output: {
           manualChunks(id) {
             if (!id.includes('node_modules')) return;
-            if (id.includes('/firebase/') || id.includes('/@firebase/')) return 'firebase';
             if (id.includes('/react/') || id.includes('/react-dom/')) return 'react';
             if (id.includes('/lucide-react/') || id.includes('/lucide-react-native/')) return 'icons';
             if (id.includes('/motion/')) return 'motion';

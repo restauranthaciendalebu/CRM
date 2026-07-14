@@ -122,8 +122,7 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
         </div>
 
         <div className="text-zinc-600 text-[10px] text-center mt-6">
-          PIN Administrador por defecto: <br />
-          <strong>1234</strong>
+          Si olvidaste tu PIN, solicita un reinicio a administración.
         </div>
       </div>
     </div>

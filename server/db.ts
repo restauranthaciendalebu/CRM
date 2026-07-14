@@ -1,5 +1,7 @@
 import fs from "fs";
 import path from "path";
+import { applicationDefault, cert, getApps, initializeApp, ServiceAccount } from "firebase-admin/app";
+import { DocumentReference, getFirestore } from "firebase-admin/firestore";
 import { 
   RestaurantState, 
   Role, 
@@ -18,6 +20,7 @@ import {
 
 const DB_DIR = path.join(process.cwd(), "data");
 const DB_FILE = path.join(DB_DIR, "restaurant_db.json");
+const FIRESTORE_STATE_DOC_PATH = process.env.FIRESTORE_STATE_DOC_PATH || "settings/restaurant_state";
 
 // Ensure data folder exists
 if (!fs.existsSync(DB_DIR)) {
@@ -260,39 +263,103 @@ const initialData: RestaurantState = {
 };
 
 export class LocalDb {
+  private static initialized = false;
+  private static stateCache: RestaurantState | null = null;
+  private static remoteDoc: DocumentReference | null = null;
+
+  static async init() {
+    if (this.initialized) return;
+    this.initialized = true;
+
+    const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    const shouldUseFirestore = process.env.FIRESTORE_ADMIN_ENABLED === "true" || !!serviceAccountPath;
+    if (!shouldUseFirestore) {
+      return;
+    }
+
+    try {
+      if (!getApps().length) {
+        if (serviceAccountPath) {
+          const rawServiceAccount = fs.readFileSync(serviceAccountPath, "utf-8");
+          const serviceAccount = JSON.parse(rawServiceAccount) as ServiceAccount;
+          initializeApp({ credential: cert(serviceAccount) });
+        } else {
+          initializeApp({ credential: applicationDefault() });
+        }
+      }
+
+      this.remoteDoc = getFirestore().doc(FIRESTORE_STATE_DOC_PATH);
+      const snap = await this.remoteDoc.get();
+      if (snap.exists) {
+        this.stateCache = this.normalizeState(snap.data() as RestaurantState);
+      } else {
+        this.stateCache = this.cloneState(initialData);
+        await this.remoteDoc.set(this.stateCache);
+      }
+      console.log(`Firestore Admin store enabled at ${FIRESTORE_STATE_DOC_PATH}`);
+    } catch (e) {
+      console.error("Firestore Admin store failed to initialize, falling back to local JSON DB:", e);
+      this.remoteDoc = null;
+      this.stateCache = null;
+    }
+  }
+
+  private static cloneState(state: RestaurantState): RestaurantState {
+    return JSON.parse(JSON.stringify(state));
+  }
+
+  private static normalizeState(state: RestaurantState): RestaurantState {
+    if (!state.users) state.users = initialData.users;
+    if (!state.tables) state.tables = initialData.tables;
+    if (!state.categories) state.categories = initialData.categories;
+    if (!state.products) state.products = initialData.products;
+    if (!state.ingredients) state.ingredients = initialData.ingredients;
+    if (!state.orders) state.orders = [];
+    if (!state.customers) state.customers = initialData.customers;
+    if (!state.loyaltyTxs) state.loyaltyTxs = initialData.loyaltyTxs;
+    if (!state.promotions) state.promotions = initialData.promotions;
+    if (!state.payments) state.payments = [];
+    if (!state.reservations) state.reservations = initialData.reservations;
+    if (!state.shifts) state.shifts = [];
+    if (!state.notifications) state.notifications = [];
+    if (!state.auditLogs) state.auditLogs = [];
+    if (!state.inventoryTransactions) state.inventoryTransactions = [];
+    if (state.onlyViewMenuQr === undefined) state.onlyViewMenuQr = true;
+    return state;
+  }
+
   private static loadState(): RestaurantState {
+    if (this.stateCache) {
+      return this.cloneState(this.stateCache);
+    }
+
     try {
       if (!fs.existsSync(DB_FILE)) {
         this.saveState(initialData);
-        return initialData;
+        return this.cloneState(initialData);
       }
       const raw = fs.readFileSync(DB_FILE, "utf-8");
+      if (!raw.trim()) {
+        return this.cloneState(initialData);
+      }
       const parsed = JSON.parse(raw) as RestaurantState;
-      // Ensure arrays exist
-      if (!parsed.users) parsed.users = initialData.users;
-      if (!parsed.tables) parsed.tables = initialData.tables;
-      if (!parsed.categories) parsed.categories = initialData.categories;
-      if (!parsed.products) parsed.products = initialData.products;
-      if (!parsed.ingredients) parsed.ingredients = initialData.ingredients;
-      if (!parsed.orders) parsed.orders = [];
-      if (!parsed.customers) parsed.customers = initialData.customers;
-      if (!parsed.loyaltyTxs) parsed.loyaltyTxs = initialData.loyaltyTxs;
-      if (!parsed.promotions) parsed.promotions = initialData.promotions;
-      if (!parsed.payments) parsed.payments = [];
-      if (!parsed.reservations) parsed.reservations = initialData.reservations;
-      if (!parsed.shifts) parsed.shifts = [];
-      if (!parsed.notifications) parsed.notifications = [];
-      if (!parsed.auditLogs) parsed.auditLogs = [];
-      if (!parsed.inventoryTransactions) parsed.inventoryTransactions = [];
-      if (parsed.onlyViewMenuQr === undefined) parsed.onlyViewMenuQr = true;
-      return parsed;
+      return this.normalizeState(parsed);
     } catch (e) {
       console.error("Error loading restaurant DB, using initial data:", e);
-      return initialData;
+      return this.cloneState(initialData);
     }
   }
 
   private static saveState(state: RestaurantState) {
+    this.stateCache = this.cloneState(state);
+
+    if (this.remoteDoc) {
+      void this.remoteDoc.set(this.stateCache).catch((e) => {
+        console.error("Error saving restaurant DB to Firestore:", e);
+      });
+      return;
+    }
+
     try {
       fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), "utf-8");
     } catch (e) {
@@ -302,14 +369,14 @@ export class LocalDb {
 
   // API operations
   static getState(): RestaurantState {
-    return this.loadState();
+    return this.cloneState(this.loadState());
   }
 
   static updateState(modifier: (state: RestaurantState) => void): RestaurantState {
     const state = this.loadState();
     modifier(state);
     this.saveState(state);
-    return state;
+    return this.cloneState(state);
   }
 
   // Deduct ingredient stock based on ingredients used in order items

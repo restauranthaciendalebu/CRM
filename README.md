@@ -18,12 +18,31 @@ npm run dev
 
 La app queda disponible en `http://localhost:3000`.
 
+Por defecto, el frontend usa el backend Express para `/api/*`. Si necesitas
+volver temporalmente al modo anterior de Firestore directo desde el navegador,
+define `VITE_USE_FIRESTORE_DIRECT_API=true` en `.env.local`.
+Ese fallback requiere reglas Firestore de desarrollo; las reglas de producción
+de este repo bloquean el acceso directo desde clientes.
+
 ## Scripts
 
 - `npm run dev`: inicia Express con Vite en modo desarrollo.
 - `npm run build`: genera el frontend y empaqueta el servidor en `dist/server.mjs`.
 - `npm run start`: ejecuta la versión compilada.
 - `npm run lint`: valida TypeScript con `tsc --noEmit`.
+
+## Persistencia Firestore Admin
+
+Para que el backend use Firestore como servidor, crea `.env.local` con:
+
+```bash
+FIRESTORE_ADMIN_ENABLED=true
+FIRESTORE_STATE_DOC_PATH=settings/restaurant_state
+FIREBASE_SERVICE_ACCOUNT_PATH=/ruta/segura/service-account.json
+```
+
+No guardes el JSON de service account dentro del repositorio. Si esas variables
+no existen, el servidor usa `data/restaurant_db.json` como fallback local.
 
 ## Flujos Principales
 
@@ -46,11 +65,12 @@ Antes de usar con datos reales:
 
 ## Notas Técnicas
 
-Actualmente existe lógica de API tanto en el cliente Firestore como en el
-servidor Express. Para producción conviene elegir una fuente de verdad:
+La fuente de verdad recomendada para producción es el backend Express. El modo
+Firestore directo desde navegador queda disponible solo como fallback/demo con:
 
-- Backend Express/API como autoridad principal, o
-- Firestore directo con reglas estrictas y estructura por colecciones.
+```bash
+VITE_USE_FIRESTORE_DIRECT_API=true
+```
 
-Mantener ambas rutas duplicadas puede producir diferencias de comportamiento
-entre desarrollo y producción.
+Mantener ese fallback activo en producción puede producir diferencias de
+comportamiento y debilitar el control de permisos.

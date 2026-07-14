@@ -40,6 +40,7 @@ import {
   Shield,
   Lock,
   Key,
+  Star,
   X
 } from "lucide-react";
 
@@ -103,6 +104,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [prodDescription, setProdDescription] = useState("");
   const [prodImageUrl, setProdImageUrl] = useState("");
   const [prodAllergens, setProdAllergens] = useState<string[]>([]);
+  const [prodIsRecommended, setProdIsRecommended] = useState(false);
   const [prodError, setProdError] = useState("");
   const [isProductSaving, setIsProductSaving] = useState(false);
 
@@ -385,6 +387,35 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     }
   };
 
+  const handleToggleRecommended = async (product: Product) => {
+    const nextRecommended = !product.isRecommended;
+    const recommendedCount = state.products.filter(p => p.isRecommended).length;
+    if (nextRecommended && recommendedCount >= 5) {
+      window.alert("Solo puedes destacar hasta 5 platos recomendados.");
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...product,
+          isRecommended: nextRecommended,
+          operatorName: activeUser?.name || "Administrador"
+        })
+      });
+      if (res.ok) {
+        onRefreshState();
+      } else {
+        const err = await res.json();
+        window.alert(err.error || "No se pudo actualizar el recomendado.");
+      }
+    } catch (e) {
+      window.alert("Error de red al actualizar el recomendado.");
+    }
+  };
+
   // 3.5 User/Staff action handlers
   const openAddUserModal = () => {
     setEditingUser(null);
@@ -399,7 +430,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const openEditUserModal = (user: User) => {
     setEditingUser(user);
     setStaffName(user.name);
-    setStaffPin(user.pin);
+    setStaffPin("");
     setStaffRole(user.role);
     setStaffPermissions(user.permissions || []);
     setStaffError("");
@@ -411,8 +442,10 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
       setStaffError("El nombre es requerido.");
       return;
     }
-    if (staffPin.length !== 4 || isNaN(Number(staffPin))) {
-      setStaffError("El PIN debe ser de exactamente 4 números.");
+    const pinIsRequired = !editingUser;
+    const pinWasEntered = staffPin.length > 0;
+    if ((pinIsRequired || pinWasEntered) && (staffPin.length !== 4 || isNaN(Number(staffPin)))) {
+      setStaffError(editingUser ? "El nuevo PIN debe tener exactamente 4 números." : "El PIN debe ser de exactamente 4 números.");
       return;
     }
     setIsStaffSaving(true);
@@ -481,6 +514,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setProdDescription("");
     setProdImageUrl("");
     setProdAllergens([]);
+    setProdIsRecommended(false);
     setProdError("");
     setIsProductModalOpen(true);
   };
@@ -493,6 +527,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setProdDescription(product.description || "");
     setProdImageUrl(product.imageUrl || "");
     setProdAllergens(product.allergens || []);
+    setProdIsRecommended(!!product.isRecommended);
     setProdError("");
     setIsProductModalOpen(true);
   };
@@ -504,6 +539,11 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     }
     if (prodPrice <= 0) {
       setProdError("El precio debe ser mayor a 0.");
+      return;
+    }
+    const recommendedCount = state.products.filter(p => p.isRecommended && p.id !== editingProductModal?.id).length;
+    if (prodIsRecommended && recommendedCount >= 5) {
+      setProdError("Solo puedes destacar hasta 5 platos recomendados.");
       return;
     }
     setIsProductSaving(true);
@@ -520,6 +560,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
           description: prodDescription,
           imageUrl: prodImageUrl,
           allergens: prodAllergens,
+          isRecommended: prodIsRecommended,
           operatorName: activeUser?.name || "Administrador"
         })
       });
@@ -809,7 +850,11 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
             <div className="flex justify-between items-center mb-5">
               <div className="text-left">
                 <h3 className="font-bold text-zinc-900 text-sm">Hamburguesas, Carnes y Platos</h3>
-                <p className="text-xs text-zinc-400 mt-0.5">Controla los precios de venta y desactiva platos agotados de forma inmediata.</p>
+                <p className="text-xs text-zinc-400 mt-0.5">Controla precios, disponibilidad y hasta 5 platos recomendados para la carta pública.</p>
+                <span className="inline-flex items-center gap-1.5 mt-2 text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                  <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                  {state.products.filter(p => p.isRecommended).length}/5 recomendados
+                </span>
               </div>
               <button
                 onClick={openAddProductModal}
@@ -819,38 +864,83 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
               </button>
             </div>
 
-            <div className="space-y-3">
-              {state.products.map((p) => (
-                <div key={p.id} className="border-b border-zinc-100 pb-3 flex justify-between items-center text-xs">
-                  <div>
-                    <span className="font-bold text-zinc-900 block">{p.name}</span>
-                    <span className="text-zinc-400">{state.categories.find(c => c.id === p.categoryId)?.name}</span>
-                  </div>
+            <div className="space-y-6">
+              {state.categories.map((cat) => {
+                const productsInCategory = state.products
+                  .filter((p) => p.categoryId === cat.id)
+                  .sort((a, b) => Number(!!b.isRecommended) - Number(!!a.isRecommended) || a.name.localeCompare(b.name));
+                if (productsInCategory.length === 0) return null;
 
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-extrabold text-zinc-900">{formatCLP(p.price)}</span>
-                      <button
-                        onClick={() => openEditProductModal(p)}
-                        className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
-                      >
-                        <Edit3 className="w-3.5 h-3.5" />
-                      </button>
+                return (
+                  <section key={cat.id} className="border border-zinc-100 rounded-2xl overflow-hidden">
+                    <div className="bg-zinc-50 border-b border-zinc-100 px-4 py-3 flex items-center justify-between">
+                      <div>
+                        <h4 className="font-black text-xs uppercase tracking-wider text-zinc-900">{cat.name}</h4>
+                        <span className="text-[10px] text-zinc-400 font-bold">{productsInCategory.length} productos</span>
+                      </div>
+                      <span className="text-[10px] font-black text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                        {productsInCategory.filter(p => p.isRecommended).length} destacados
+                      </span>
                     </div>
 
-                    <button
-                      onClick={() => handleToggleProduct(p.id)}
-                      className={`px-2.5 py-1 rounded-full font-bold text-[10px] border transition-all cursor-pointer ${
-                        p.isAvailable 
-                          ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
-                          : "bg-red-50 border-red-200 text-red-800"
-                      }`}
-                    >
-                      {p.isAvailable ? "Activo" : "Pausado"}
-                    </button>
-                  </div>
-                </div>
-              ))}
+                    <div className="divide-y divide-zinc-100">
+                      {productsInCategory.map((p) => (
+                        <div key={p.id} className="py-3 px-4 flex flex-col md:flex-row md:justify-between md:items-center gap-3 text-xs">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-zinc-900 block">{p.name}</span>
+                              {p.isRecommended && (
+                                <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded-full text-[9px] font-black uppercase">
+                                  <Star className="w-2.5 h-2.5 fill-amber-500 text-amber-500" />
+                                  Recomendado
+                                </span>
+                              )}
+                            </div>
+                            {p.description && (
+                              <span className="text-zinc-400 line-clamp-1 mt-0.5 block">{p.description}</span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 justify-end flex-wrap">
+                            <span className="font-extrabold text-zinc-900 min-w-[80px] text-right">{formatCLP(p.price)}</span>
+
+                            <button
+                              onClick={() => handleToggleRecommended(p)}
+                              title={p.isRecommended ? "Quitar de recomendados" : "Marcar como recomendado"}
+                              className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-all cursor-pointer ${
+                                p.isRecommended
+                                  ? "bg-amber-500 border-amber-600 text-zinc-950"
+                                  : "bg-white border-zinc-200 text-zinc-300 hover:text-amber-500 hover:border-amber-300"
+                              }`}
+                            >
+                              <Star className={`w-4 h-4 ${p.isRecommended ? "fill-zinc-950" : ""}`} />
+                            </button>
+
+                            <button
+                              onClick={() => openEditProductModal(p)}
+                              title="Editar producto"
+                              className="w-8 h-8 rounded-lg border border-zinc-200 bg-white text-zinc-400 hover:text-zinc-600 flex items-center justify-center cursor-pointer"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={() => handleToggleProduct(p.id)}
+                              className={`px-2.5 py-1 rounded-full font-bold text-[10px] border transition-all cursor-pointer ${
+                                p.isAvailable 
+                                  ? "bg-emerald-50 border-emerald-200 text-emerald-800" 
+                                  : "bg-red-50 border-red-200 text-red-800"
+                              }`}
+                            >
+                              {p.isAvailable ? "Activo" : "Pausado"}
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1486,7 +1576,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                         </div>
                         <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1 text-xs font-mono font-bold text-zinc-700">
                           <Lock className="w-3 h-3 text-zinc-400" />
-                          <span>PIN: {u.pin}</span>
+                          <span>PIN: ****</span>
                         </div>
                       </div>
 
@@ -1566,11 +1656,13 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-zinc-700">PIN (4 números)</label>
+                  <label className="text-xs font-bold text-zinc-700">
+                    {editingUser ? "Nuevo PIN (opcional)" : "PIN (4 números)"}
+                  </label>
                   <input
                     type="password"
                     maxLength={4}
-                    placeholder="Ej: 5555"
+                    placeholder={editingUser ? "Dejar igual" : "Ej: 5555"}
                     value={staffPin}
                     onChange={(e) => setStaffPin(e.target.value.replace(/\D/g, ""))}
                     className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs text-center font-mono font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950"
@@ -1715,6 +1807,31 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                   className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-955 font-mono text-zinc-950"
                 />
               </div>
+
+              <button
+                type="button"
+                onClick={() => setProdIsRecommended(prev => !prev)}
+                className={`w-full border rounded-xl p-3 text-left flex items-center justify-between transition-all cursor-pointer ${
+                  prodIsRecommended
+                    ? "bg-amber-50 border-amber-300 text-amber-900"
+                    : "bg-zinc-50 border-zinc-200 text-zinc-600 hover:bg-zinc-100"
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Star className={`w-4 h-4 ${prodIsRecommended ? "fill-amber-500 text-amber-500" : "text-zinc-400"}`} />
+                  <div>
+                    <span className="text-xs font-black block">Plato recomendado</span>
+                    <span className="text-[10px] text-zinc-400 font-semibold">
+                      Se mostrará destacado con estrella en la carta pública.
+                    </span>
+                  </div>
+                </div>
+                <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-full ${
+                  prodIsRecommended ? "bg-amber-500 text-zinc-950" : "bg-white border border-zinc-200 text-zinc-400"
+                }`}>
+                  {prodIsRecommended ? "Activo" : "No"}
+                </span>
+              </button>
 
               <div className="space-y-2">
                 <label className="text-xs font-bold text-zinc-700 block">Alérgenos</label>

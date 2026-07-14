@@ -151,11 +151,6 @@ export default function MozoView({
     }
   };
 
-  const handleAutoLogin = () => {
-    // Quick login as Waiter Juan (pin 2222)
-    validatePin("2222");
-  };
-
   // 2. ACTIVE ORDER HELPERS
   const activeOrder = selectedTable
     ? state.orders.find(o => o.tableId === selectedTable.id && o.status !== OrderStatus.CLOSED)
@@ -506,16 +501,16 @@ export default function MozoView({
               0
             </button>
             <button
-              onClick={handleAutoLogin}
-              className="w-16 h-16 rounded-full bg-amber-500/10 border border-amber-500/20 text-[10px] font-extrabold uppercase text-amber-500 hover:bg-amber-500/20 flex items-center justify-center transition-all cursor-pointer"
+              onClick={() => validatePin(pinInput)}
+              disabled={pinInput.length === 0}
+              className="w-16 h-16 rounded-full bg-emerald-600 hover:bg-emerald-500 font-bold text-xs flex items-center justify-center transition-all active:scale-90 border border-emerald-500/50 cursor-pointer disabled:opacity-55 text-white"
             >
-              Auto PIN
+              Aceptar
             </button>
           </div>
 
           <div className="text-zinc-600 text-[10px] text-center mt-6">
-            PINs de demostración: <br />
-            <strong>2222</strong> (Juan - Mozo) | <strong>1234</strong> (Don Ricardo - Admin)
+            Si olvidaste tu PIN, solicita un reinicio a administración.
           </div>
         </div>
       </div>

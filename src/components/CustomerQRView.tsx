@@ -82,7 +82,9 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
   const categoriesWithProducts = state.categories
     .map((cat) => ({
       ...cat,
-      products: filteredProducts.filter((p) => p.categoryId === cat.id),
+      products: filteredProducts
+        .filter((p) => p.categoryId === cat.id)
+        .sort((a, b) => Number(!!b.isRecommended) - Number(!!a.isRecommended) || a.name.localeCompare(b.name)),
     }))
     .filter((cat) => cat.products.length > 0);
 
@@ -391,9 +393,17 @@ ${menuHTML}
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-bold text-sm text-zinc-100 leading-tight">
-                          {product.name}
-                        </h3>
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className="font-bold text-sm text-zinc-100 leading-tight">
+                            {product.name}
+                          </h3>
+                          {product.isRecommended && (
+                            <span className="flex-shrink-0 inline-flex items-center gap-1 bg-amber-500 text-zinc-950 text-[9px] font-black uppercase px-2 py-0.5 rounded-full">
+                              <Star className="w-3 h-3 fill-zinc-950" />
+                              Recomendado
+                            </span>
+                          )}
+                        </div>
                         {product.description && (
                           <p className="text-[11px] text-zinc-500 mt-0.5 line-clamp-2 leading-relaxed">
                             {product.description}

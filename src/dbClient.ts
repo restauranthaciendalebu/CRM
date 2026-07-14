@@ -22,12 +22,17 @@ const STATE_DOC_REF = doc(db, "settings", "restaurant_state");
 // Cache local of the database state
 let currentCachedState: RestaurantState | null = null;
 let stateListeners: ((state: RestaurantState) => void)[] = [];
+let authFailureCount = 0;
+let authLockedUntil = 0;
+
+const AUTH_MAX_FAILED_ATTEMPTS = 5;
+const AUTH_LOCK_MS = 5 * 60 * 1000;
 
 // Helper function to dynamically subscribe to Firestore changes in real-time
 export function subscribeToState(callback: (state: RestaurantState) => void) {
   stateListeners.push(callback);
   if (currentCachedState) {
-    callback(currentCachedState);
+    callback(sanitizeForClient(currentCachedState));
   }
   return () => {
     stateListeners = stateListeners.filter(l => l !== callback);
@@ -39,21 +44,8 @@ onSnapshot(STATE_DOC_REF, async (docSnap) => {
   if (docSnap.exists()) {
     const data = docSnap.data() as RestaurantState;
     currentCachedState = data;
-    
-    // Auto-repair if old test PINs are present in the Firestore document
-    const hasCorrectPin = data.users?.some(u => u.pin === "1234");
-    if (!hasCorrectPin) {
-      console.log("Updating users database with correct PINs...");
-      try {
-        await updateState(s => {
-          s.users = DEMO_STATE.users;
-        });
-      } catch (err) {
-        console.error("Failed to auto-repair PINs:", err);
-      }
-    }
 
-    stateListeners.forEach(listener => listener(data));
+    stateListeners.forEach(listener => listener(sanitizeForClient(data)));
   } else {
     // Database hasn't been initialized yet. Save the default initial state
     console.log("No remote state found, initializing Firestore with default schema...");
@@ -126,11 +118,35 @@ function deductStockForOrder(order: Order, state: RestaurantState) {
 }
 
 // Local mock response helper
+function sanitizeForClient<T>(data: T): T {
+  return JSON.parse(JSON.stringify(data, (key, value) => key === "pin" ? "" : value));
+}
+
 function createResponse(data: any, status: number = 200) {
-  return new Response(JSON.stringify(data), {
+  return new Response(JSON.stringify(sanitizeForClient(data)), {
     status,
     headers: { "Content-Type": "application/json" }
   });
+}
+
+function getAuthLockError() {
+  const now = Date.now();
+  if (authLockedUntil <= now) return "";
+  const seconds = Math.ceil((authLockedUntil - now) / 1000);
+  return `Demasiados intentos fallidos. Intenta nuevamente en ${seconds} segundos.`;
+}
+
+function recordAuthFailure() {
+  authFailureCount++;
+  if (authFailureCount >= AUTH_MAX_FAILED_ATTEMPTS) {
+    authLockedUntil = Date.now() + AUTH_LOCK_MS;
+    authFailureCount = 0;
+  }
+}
+
+function clearAuthFailures() {
+  authFailureCount = 0;
+  authLockedUntil = 0;
 }
 
 // Intercept window.fetch and routing calls to simulate server
@@ -165,11 +181,21 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     // 2. Auth PIN
     if (path === "/api/auth/pin" && method === "POST") {
       const { pin } = body;
+      const lockError = getAuthLockError();
+      if (lockError) {
+        return createResponse({ error: lockError }, 429);
+      }
+      if (typeof pin !== "string" || !/^\d{4}$/.test(pin)) {
+        recordAuthFailure();
+        return createResponse({ error: "PIN inválido" }, 401);
+      }
       const state = currentCachedState || DEMO_STATE;
       const user = state.users.find(u => u.pin === pin);
       if (!user) {
+        recordAuthFailure();
         return createResponse({ error: "PIN inválido" }, 401);
       }
+      clearAuthFailures();
       await updateState(s => {
         if (!s.auditLogs) s.auditLogs = [];
         s.auditLogs.push({
@@ -181,7 +207,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           createdAt: new Date().toISOString()
         });
       });
-      return createResponse(user);
+      return createResponse({ ...user, pin: "" });
     }
 
     // 3. Update tables
@@ -607,11 +633,20 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
     // 11. Admin Menu & Category Actions
     if (path === "/api/products" && method === "POST") {
-      const { id, name, description, price, imageUrl, categoryId, allergens, isAvailable, recipe, operatorName } = body;
+      const { id, name, description, price, imageUrl, categoryId, allergens, isAvailable, isRecommended, recipe, operatorName } = body;
       let savedProduct: any = null;
+      let errorMsg = "";
 
       await updateState(s => {
         if (!s.auditLogs) s.auditLogs = [];
+        if (isRecommended === true) {
+          const recommendedCount = s.products.filter(p => p.isRecommended && p.id !== id).length;
+          if (recommendedCount >= 5) {
+            errorMsg = "Solo puedes destacar hasta 5 platos recomendados.";
+            return;
+          }
+        }
+
         if (id) {
           const prod = s.products.find(p => p.id === id);
           if (prod) {
@@ -623,6 +658,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             prod.categoryId = categoryId;
             prod.allergens = allergens || [];
             prod.isAvailable = isAvailable !== undefined ? isAvailable : prod.isAvailable;
+            prod.isRecommended = !!isRecommended;
             prod.recipe = recipe || prod.recipe || [];
             savedProduct = prod;
 
@@ -644,6 +680,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             categoryId,
             allergens: allergens || [],
             isAvailable: isAvailable !== undefined ? isAvailable : true,
+            isRecommended: !!isRecommended,
             recipe: recipe || []
           };
           s.products.push(savedProduct);
@@ -657,6 +694,9 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         }
       });
 
+      if (errorMsg) {
+        return createResponse({ error: errorMsg }, 400);
+      }
       return createResponse({ success: true, product: savedProduct });
     }
 
@@ -697,9 +737,18 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
       await updateState(s => {
         if (!s.auditLogs) s.auditLogs = [];
-        
-        // PIN uniqueness check (excluding self)
-        const duplicate = s.users.find(u => u.pin === pin && u.id !== id);
+
+        const shouldUpdatePin = typeof pin === "string" && pin.length > 0;
+        if (!id && !/^\d{4}$/.test(pin || "")) {
+          errorMsg = "El PIN debe ser de exactamente 4 números.";
+          return;
+        }
+        if (id && shouldUpdatePin && !/^\d{4}$/.test(pin)) {
+          errorMsg = "El PIN debe ser de exactamente 4 números.";
+          return;
+        }
+
+        const duplicate = shouldUpdatePin ? s.users.find(u => u.pin === pin && u.id !== id) : null;
         if (duplicate) {
           errorMsg = `El PIN ${pin} ya está siendo utilizado por ${duplicate.name}.`;
           return;
@@ -713,7 +762,9 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             const prevPermissions = user.permissions || [];
 
             user.name = name;
-            user.pin = pin;
+            if (shouldUpdatePin) {
+              user.pin = pin;
+            }
             user.role = role;
             user.permissions = permissions || [];
             savedUser = user;
@@ -739,7 +790,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           s.auditLogs.push({
             id: "audit_" + Math.random().toString(36).substring(2, 11),
             action: "Personal Creado",
-            details: `Se creó el perfil de "${name}" con Rol: ${role}, PIN: ${pin}, Permisos: [${(permissions || []).join(", ")}] por ${operatorName || "Administrador"}.`,
+            details: `Se creó el perfil de "${name}" con Rol: ${role}, Permisos: [${(permissions || []).join(", ")}] por ${operatorName || "Administrador"}.`,
             createdAt: new Date().toISOString()
           });
         }

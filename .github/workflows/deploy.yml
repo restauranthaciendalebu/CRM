@@ -35,6 +35,7 @@ jobs:
       - name: Build frontend
         env:
           GITHUB_PAGES: 'true'
+          VITE_USE_FIRESTORE_DIRECT_API: 'true'
         run: npx vite build
 
       - name: Setup Pages

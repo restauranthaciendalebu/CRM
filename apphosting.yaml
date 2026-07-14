@@ -8,6 +8,10 @@ runConfig:
 env:
   - variable: NODE_ENV
     value: production
+  - variable: FIRESTORE_ADMIN_ENABLED
+    value: "true"
+  - variable: FIRESTORE_STATE_DOC_PATH
+    value: settings/restaurant_state
 
 scripts:
   buildCommand: npm install && npm run build

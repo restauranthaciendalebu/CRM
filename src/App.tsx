@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect, useState } from "react";
 import { RestaurantState, User } from "./types";
 import { themes } from "./theme";
-import { subscribeToState } from "./dbClient";
+import { subscribeToState } from "./stateClient";
 
 const RoleSelector = lazy(() => import("./components/RoleSelector"));
 const ClienteView = lazy(() => import("./components/ClienteView"));

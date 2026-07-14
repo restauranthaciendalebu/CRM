@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import { LocalDb } from "./server/db.js"; // Standard ES Modules syntax or tsx resolver
 import { 
@@ -19,12 +20,46 @@ import {
   RestaurantState
 } from "./src/types.js";
 
+dotenv.config({ path: ".env.local" });
+dotenv.config();
+
 // Helper for ESM pathing
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 
 async function startServer() {
+  await LocalDb.init();
+
   const app = express();
   const PORT = 3000;
+  let authFailureCount = 0;
+  let authLockedUntil = 0;
+
+  const AUTH_MAX_FAILED_ATTEMPTS = 5;
+  const AUTH_LOCK_MS = 5 * 60 * 1000;
+
+  const getAuthLockError = () => {
+    const now = Date.now();
+    if (authLockedUntil <= now) return "";
+    const seconds = Math.ceil((authLockedUntil - now) / 1000);
+    return `Demasiados intentos fallidos. Intenta nuevamente en ${seconds} segundos.`;
+  };
+
+  const recordAuthFailure = () => {
+    authFailureCount++;
+    if (authFailureCount >= AUTH_MAX_FAILED_ATTEMPTS) {
+      authLockedUntil = Date.now() + AUTH_LOCK_MS;
+      authFailureCount = 0;
+    }
+  };
+
+  const clearAuthFailures = () => {
+    authFailureCount = 0;
+    authLockedUntil = 0;
+  };
+
+  const sanitizeForClient = <T,>(data: T): T => {
+    return JSON.parse(JSON.stringify(data, (key, value) => key === "pin" ? "" : value));
+  };
 
   // Middleware
   app.use(express.json());
@@ -47,10 +82,10 @@ async function startServer() {
   app.get("/api/state", (req, res) => {
     try {
       const state = LocalDb.getState();
-      res.json({
+      res.json(sanitizeForClient({
         ...state,
         notifications: notifications.filter(n => !n.resolved)
-      });
+      }));
     } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
@@ -59,14 +94,21 @@ async function startServer() {
   // 2. Authenticate PIN
   app.post("/api/auth/pin", (req, res) => {
     const { pin } = req.body;
-    if (!pin) {
-      return res.status(400).json({ error: "PIN is required" });
+    const lockError = getAuthLockError();
+    if (lockError) {
+      return res.status(429).json({ error: lockError });
+    }
+    if (typeof pin !== "string" || !/^\d{4}$/.test(pin)) {
+      recordAuthFailure();
+      return res.status(401).json({ error: "PIN inválido" });
     }
     const state = LocalDb.getState();
     const user = state.users.find(u => u.pin === pin);
     if (!user) {
+      recordAuthFailure();
       return res.status(401).json({ error: "PIN inválido" });
     }
+    clearAuthFailures();
     LocalDb.updateState(s => {
       if (!s.auditLogs) s.auditLogs = [];
       s.auditLogs.push({
@@ -78,7 +120,7 @@ async function startServer() {
         createdAt: new Date().toISOString()
       });
     });
-    res.json(user);
+    res.json({ ...user, pin: "" });
   });
 
   // 3. Update table status or layout
@@ -157,7 +199,7 @@ async function startServer() {
       });
     });
 
-    res.json({ success: true, state: LocalDb.getState() });
+    res.json(sanitizeForClient({ success: true, state: LocalDb.getState() }));
   });
 
   // 4. Create Order / Add order from Customer QR (requires waiter approval)
@@ -440,7 +482,7 @@ async function startServer() {
       }
     });
 
-    res.json({ success: true, state: LocalDb.getState() });
+    res.json(sanitizeForClient({ success: true, state: LocalDb.getState() }));
   });
 
   // 10. Customer loyalty actions
@@ -529,13 +571,22 @@ async function startServer() {
 
   // 11. Admin Menu & Category Actions
   app.post("/api/products", (req, res) => {
-    const { id, name, description, price, imageUrl, categoryId, allergens, isAvailable, recipe } = req.body;
+    const { id, name, description, price, imageUrl, categoryId, allergens, isAvailable, isRecommended, recipe } = req.body;
     if (!name || !price || !categoryId) {
       return res.status(400).json({ error: "Nombre, precio y categoría son obligatorios" });
     }
 
     let savedProduct: any = null;
+    let errorMsg = "";
     LocalDb.updateState(state => {
+      if (isRecommended === true) {
+        const recommendedCount = state.products.filter(p => p.isRecommended && p.id !== id).length;
+        if (recommendedCount >= 5) {
+          errorMsg = "Solo puedes destacar hasta 5 platos recomendados.";
+          return;
+        }
+      }
+
       if (id) {
         // Edit
         const prod = state.products.find(p => p.id === id);
@@ -547,6 +598,7 @@ async function startServer() {
           prod.categoryId = categoryId;
           prod.allergens = allergens || [];
           prod.isAvailable = isAvailable !== undefined ? isAvailable : prod.isAvailable;
+          prod.isRecommended = !!isRecommended;
           prod.recipe = recipe || prod.recipe || [];
           savedProduct = prod;
         }
@@ -562,12 +614,16 @@ async function startServer() {
           categoryId,
           allergens: allergens || [],
           isAvailable: isAvailable !== undefined ? isAvailable : true,
+          isRecommended: !!isRecommended,
           recipe: recipe || []
         };
         state.products.push(savedProduct);
       }
     });
 
+    if (errorMsg) {
+      return res.status(400).json({ error: errorMsg });
+    }
     res.json({ success: true, product: savedProduct });
   });
 
@@ -583,6 +639,119 @@ async function startServer() {
       }
     });
     res.json({ success: true, product: updated });
+  });
+
+  // 11.5 Admin User/Staff Management
+  app.get("/api/users", (req, res) => {
+    res.json(sanitizeForClient(LocalDb.getState().users));
+  });
+
+  app.post("/api/users", (req, res) => {
+    const { id, name, pin, role, permissions, operatorName } = req.body;
+    if (!name || !role) {
+      return res.status(400).json({ error: "Nombre y rol son obligatorios." });
+    }
+
+    let savedUser: any = null;
+    let errorMsg = "";
+
+    LocalDb.updateState(state => {
+      if (!state.auditLogs) state.auditLogs = [];
+
+      const shouldUpdatePin = typeof pin === "string" && pin.length > 0;
+      if (!id && !/^\d{4}$/.test(pin || "")) {
+        errorMsg = "El PIN debe ser de exactamente 4 números.";
+        return;
+      }
+      if (id && shouldUpdatePin && !/^\d{4}$/.test(pin)) {
+        errorMsg = "El PIN debe ser de exactamente 4 números.";
+        return;
+      }
+
+      const duplicate = shouldUpdatePin ? state.users.find(u => u.pin === pin && u.id !== id) : null;
+      if (duplicate) {
+        errorMsg = `El PIN ${pin} ya está siendo utilizado por ${duplicate.name}.`;
+        return;
+      }
+
+      if (id) {
+        const user = state.users.find(u => u.id === id);
+        if (!user) {
+          errorMsg = "Usuario no encontrado.";
+          return;
+        }
+
+        const prevName = user.name;
+        const prevRole = user.role;
+        const prevPermissions = user.permissions || [];
+
+        user.name = name;
+        if (shouldUpdatePin) {
+          user.pin = pin;
+        }
+        user.role = role as Role;
+        user.permissions = permissions || [];
+        savedUser = user;
+
+        state.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substr(2, 9),
+          action: "Personal Modificado",
+          details: `Se modificó el perfil de "${prevName}" (ahora: "${name}", Rol: ${prevRole} -> ${role}, Permisos: [${prevPermissions.join(", ")}] -> [${(permissions || []).join(", ")}]) por ${operatorName || "Administrador"}.`,
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        savedUser = {
+          id: "u_" + Math.random().toString(36).substr(2, 9),
+          name,
+          pin,
+          role: role as Role,
+          permissions: permissions || []
+        };
+        state.users.push(savedUser);
+
+        state.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substr(2, 9),
+          action: "Personal Creado",
+          details: `Se creó el perfil de "${name}" con Rol: ${role}, Permisos: [${(permissions || []).join(", ")}] por ${operatorName || "Administrador"}.`,
+          createdAt: new Date().toISOString()
+        });
+      }
+    });
+
+    if (errorMsg) {
+      return res.status(400).json({ error: errorMsg });
+    }
+    res.json(sanitizeForClient({ success: true, user: savedUser }));
+  });
+
+  app.post("/api/users/:id/delete", (req, res) => {
+    const { id } = req.params;
+    const { operatorName } = req.body;
+    let errorMsg = "";
+
+    LocalDb.updateState(state => {
+      if (!state.auditLogs) state.auditLogs = [];
+      const index = state.users.findIndex(u => u.id === id);
+      if (index === -1) {
+        errorMsg = "Usuario no encontrado";
+        return;
+      }
+
+      const user = state.users[index];
+      state.users.splice(index, 1);
+
+      state.auditLogs.push({
+        id: "audit_" + Math.random().toString(36).substr(2, 9),
+        action: "Personal Eliminado",
+        details: `Se eliminó el perfil de "${user.name}" (Rol: ${user.role}) por ${operatorName || "Administrador"}.`,
+        createdAt: new Date().toISOString()
+      });
+    });
+
+    if (errorMsg) {
+      return res.status(404).json({ error: errorMsg });
+    }
+    res.json({ success: true });
   });
 
   // 12. Admin Inventory management
@@ -736,7 +905,7 @@ async function startServer() {
         createdAt: new Date().toISOString()
       });
     });
-    res.json({ success: true, state: LocalDb.getState() });
+    res.json(sanitizeForClient({ success: true, state: LocalDb.getState() }));
   });
 
   // 14. Shifts (Work sessions)
@@ -841,7 +1010,7 @@ async function startServer() {
       });
     });
 
-    res.json({ success: true, state: LocalDb.getState() });
+    res.json(sanitizeForClient({ success: true, state: LocalDb.getState() }));
   });
 
   // 16. Void/Refund Order & Restore Stock
@@ -932,7 +1101,7 @@ async function startServer() {
     if (!success) {
       return res.status(400).json({ error: errorMsg });
     }
-    res.json({ success: true, state: LocalDb.getState() });
+    res.json(sanitizeForClient({ success: true, state: LocalDb.getState() }));
   });
 
   // FRONTEND DEVELOPEMENT & ASSETS ROUTING
