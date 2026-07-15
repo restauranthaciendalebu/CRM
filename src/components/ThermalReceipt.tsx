@@ -4,7 +4,7 @@ import { Order, RestaurantState, PaymentMethod } from "../types";
 interface ThermalReceiptProps {
   order: Order;
   state: RestaurantState;
-  payments: Array<{ amount: number; method: PaymentMethod; tip: number; discount: number }>;
+  payments: Array<{ amount: number; method: PaymentMethod; tip: number; discount: number; createdAt?: string }>;
   waiterName?: string;
 }
 
@@ -16,10 +16,12 @@ export function printThermalReceipt({ order, state, payments, waiterName }: Ther
   const table = state.tables.find((t) => t.id === order.tableId);
   const tableName = table ? `Mesa ${table.number} — ${table.zone}` : "Sin mesa";
 
-  const now = new Date();
-  const dateStr = now.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const timeStr = now.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
-  const receiptNumber = `B-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${Math.floor(Math.random() * 9000 + 1000)}`;
+  const receiptDate = new Date(payments[0]?.createdAt || (order.status === "CLOSED" ? order.updatedAt : new Date().toISOString()));
+  const dateStr = receiptDate.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
+  const timeStr = receiptDate.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
+  const receiptDay = `${receiptDate.getFullYear()}${String(receiptDate.getMonth() + 1).padStart(2, "0")}${String(receiptDate.getDate()).padStart(2, "0")}`;
+  const receiptId = order.id.replace(/[^a-zA-Z0-9]/g, "").slice(-8).toUpperCase().padStart(8, "0");
+  const receiptNumber = `B-${receiptDay}-${receiptId}`;
 
   // Build items rows
   const itemsHTML = order.items

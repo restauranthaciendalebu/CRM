@@ -29,12 +29,14 @@ import {
   Utensils, 
   Percent, 
   Users,
-  Printer
+  Printer,
+  ReceiptText
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { printThermalReceipt } from "./ThermalReceipt";
 import { isDirectServiceProduct } from "../orderUtils";
 import AddTableModal from "./AddTableModal";
+import WaiterReceiptHistory from "./WaiterReceiptHistory";
 
 interface MozoViewProps {
   state: RestaurantState;
@@ -91,6 +93,7 @@ export default function MozoView({
   const [pendingOrderActionIds, setPendingOrderActionIds] = useState<string[]>([]);
   const [isSendingKitchen, setIsSendingKitchen] = useState(false);
   const [isAddTableOpen, setIsAddTableOpen] = useState(false);
+  const [isReceiptHistoryOpen, setIsReceiptHistoryOpen] = useState(false);
 
   // Billing modal
   const [isBillingOpen, setIsBillingOpen] = useState(false);
@@ -671,6 +674,14 @@ export default function MozoView({
               aria-label="Agregar mesa"
             >
               <Plus className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setIsReceiptHistoryOpen(true)}
+              className="h-9 w-9 rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:border-amber-400 hover:text-amber-700 flex items-center justify-center"
+              title="Historial de boletas"
+              aria-label="Abrir historial de boletas"
+            >
+              <ReceiptText className="w-4 h-4" />
             </button>
             <button
               onClick={() => setIsShiftControlOpen(true)}
@@ -1681,6 +1692,13 @@ export default function MozoView({
           operatorName={activeUser?.name || "Garzón"}
           onClose={() => setIsAddTableOpen(false)}
           onAdded={(table) => showBanner(`Mesa ${table.number} agregada con éxito.`)}
+        />
+      )}
+
+      {isReceiptHistoryOpen && (
+        <WaiterReceiptHistory
+          state={state}
+          onClose={() => setIsReceiptHistoryOpen(false)}
         />
       )}
 
