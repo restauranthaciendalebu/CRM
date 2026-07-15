@@ -62,6 +62,8 @@ export interface User {
   id: string;
   pin: string;
   name: string;
+  username?: string;
+  password?: string;
   role: Role;
   permissions?: string[];
 }

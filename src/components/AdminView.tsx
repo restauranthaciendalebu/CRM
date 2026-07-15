@@ -92,6 +92,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [staffName, setStaffName] = useState("");
+  const [staffUsername, setStaffUsername] = useState("");
+  const [staffPassword, setStaffPassword] = useState("");
   const [staffPin, setStaffPin] = useState("");
   const [staffRole, setStaffRole] = useState<Role>(Role.WAITER);
   const [staffPermissions, setStaffPermissions] = useState<string[]>([]);
@@ -524,6 +526,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const openAddUserModal = () => {
     setEditingUser(null);
     setStaffName("");
+    setStaffUsername("");
+    setStaffPassword("");
     setStaffPin("");
     setStaffRole(Role.WAITER);
     setStaffPermissions([]);
@@ -534,6 +538,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const openEditUserModal = (user: User) => {
     setEditingUser(user);
     setStaffName(user.name);
+    setStaffUsername(user.username || user.name.split("(")[0].trim().split(/\s+/)[0].toLowerCase());
+    setStaffPassword("");
     setStaffPin("");
     setStaffRole(user.role);
     setStaffPermissions(user.permissions || []);
@@ -544,6 +550,10 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const handleSaveUser = async () => {
     if (!staffName.trim()) {
       setStaffError("El nombre es requerido.");
+      return;
+    }
+    if (!staffUsername.trim() || (!editingUser && !staffPassword)) {
+      setStaffError(editingUser ? "El usuario es requerido." : "Usuario y contraseña son obligatorios.");
       return;
     }
     const pinIsRequired = !editingUser;
@@ -561,6 +571,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
         body: JSON.stringify({
           id: editingUser?.id,
           name: staffName,
+          username: staffUsername,
+          password: staffPassword,
           pin: staffPin,
           role: staffRole,
           permissions: staffPermissions,
@@ -1773,7 +1785,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                 <h3 className="font-bold text-zinc-900 text-sm flex items-center gap-1.5">
                   <Users className="w-4 h-4 text-amber-500" /> Control de Personal y Autorizaciones
                 </h3>
-                <p className="text-xs text-zinc-400 mt-0.5">Administra los usuarios del sistema, sus PINs de acceso y sus permisos específicos.</p>
+                <p className="text-xs text-zinc-400 mt-0.5">Administra usuarios, contraseñas y permisos de acceso.</p>
               </div>
               <button
                 onClick={openAddUserModal}
@@ -1798,7 +1810,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                         </div>
                         <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-lg px-2 py-1 text-xs font-mono font-bold text-zinc-700">
                           <Lock className="w-3 h-3 text-zinc-400" />
-                          <span>PIN: ****</span>
+                          <span>{u.username || u.name.split("(")[0].trim().split(/\s+/)[0].toLowerCase()}</span>
                         </div>
                       </div>
 
@@ -1874,6 +1886,31 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                   onChange={(e) => setStaffName(e.target.value)}
                   className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950 font-medium"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-700">Usuario</label>
+                  <input
+                    type="text"
+                    autoCapitalize="none"
+                    placeholder="Ej: pedro"
+                    value={staffUsername}
+                    onChange={(e) => setStaffUsername(e.target.value)}
+                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950 font-medium"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-700">{editingUser ? "Nueva contraseña (opcional)" : "Contraseña"}</label>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder={editingUser ? "Dejar igual" : "Contraseña segura"}
+                    value={staffPassword}
+                    onChange={(e) => setStaffPassword(e.target.value)}
+                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950 font-medium"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

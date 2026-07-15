@@ -142,7 +142,15 @@ function deductStockForOrder(order: Order, state: RestaurantState) {
 
 // Local mock response helper
 function sanitizeForClient<T>(data: T): T {
-  return JSON.parse(JSON.stringify(data, (key, value) => key === "pin" ? "" : value));
+  return JSON.parse(JSON.stringify(data, (key, value) => (key === "pin" || key === "password") ? "" : value));
+}
+
+function normalizeUsername(value: string) {
+  return value.trim().toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+function legacyUsername(user: { name: string; username?: string }) {
+  return normalizeUsername(user.username || user.name.split("(")[0].trim().split(/\s+/)[0]);
 }
 
 function createResponse(data: any, status: number = 200) {
@@ -235,6 +243,46 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         console.error("No se pudo guardar la auditoría de inicio de sesión", error);
       });
       return createResponse({ ...user, pin: "" });
+    }
+
+    // Username/password login. Existing PIN accounts remain compatible through
+    // their legacy username and PIN until an administrator sets new credentials.
+    if (path === "/api/auth/login" && method === "POST") {
+      const { username, password } = body;
+      const lockError = getAuthLockError();
+      if (lockError) return createResponse({ error: lockError }, 429);
+      if (typeof username !== "string" || typeof password !== "string" || !username.trim() || !password) {
+        recordAuthFailure();
+        return createResponse({ error: "Ingresa usuario y contraseña" }, 401);
+      }
+
+      const state = currentCachedState || DEMO_STATE;
+      const normalizedInput = normalizeUsername(username);
+      const user = state.users.find((candidate) => {
+        const matchesUsername = normalizeUsername(candidate.username || "") === normalizedInput || legacyUsername(candidate) === normalizedInput;
+        const matchesPassword = candidate.password ? candidate.password === password : candidate.pin === password;
+        return matchesUsername && matchesPassword;
+      });
+
+      if (!user) {
+        recordAuthFailure();
+        return createResponse({ error: "Usuario o contraseña incorrectos" }, 401);
+      }
+
+      clearAuthFailures();
+      void updateState(s => {
+        if (!s.auditLogs) s.auditLogs = [];
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          userId: user.id,
+          userName: user.name,
+          action: "Inicio de Sesión",
+          details: `${user.name} inició sesión en el sistema.`,
+          createdAt: new Date().toISOString()
+        });
+      }).catch((error) => console.error("No se pudo guardar la auditoría de inicio de sesión", error));
+
+      return createResponse({ ...user, pin: "", password: "" });
     }
 
     // 3. Update tables
@@ -829,7 +877,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     }
 
     if (path === "/api/users" && method === "POST") {
-      const { id, name, pin, role, permissions, operatorName } = body;
+      const { id, name, username, password, pin, role, permissions, operatorName } = body;
       let savedUser: any = null;
       let errorMsg = "";
 
@@ -837,6 +885,12 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         if (!s.auditLogs) s.auditLogs = [];
 
         const shouldUpdatePin = typeof pin === "string" && pin.length > 0;
+        const shouldUpdatePassword = typeof password === "string" && password.length > 0;
+        const normalizedUsername = normalizeUsername(username || "");
+        if (!id && (!normalizedUsername || !shouldUpdatePassword)) {
+          errorMsg = "Usuario y contraseña son obligatorios.";
+          return;
+        }
         if (!id && !/^\d{4}$/.test(pin || "")) {
           errorMsg = "El PIN debe ser de exactamente 4 números.";
           return;
@@ -852,6 +906,14 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           return;
         }
 
+        const duplicateUsername = normalizedUsername
+          ? s.users.find(u => normalizeUsername(u.username || legacyUsername(u)) === normalizedUsername && u.id !== id)
+          : null;
+        if (duplicateUsername) {
+          errorMsg = `El usuario ${username} ya está siendo utilizado.`;
+          return;
+        }
+
         if (id) {
           const user = s.users.find(u => u.id === id);
           if (user) {
@@ -860,6 +922,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             const prevPermissions = user.permissions || [];
 
             user.name = name;
+            if (normalizedUsername) user.username = normalizedUsername;
+            if (shouldUpdatePassword) user.password = password;
             if (shouldUpdatePin) {
               user.pin = pin;
             }
@@ -879,6 +943,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           savedUser = {
             id: newId,
             name,
+            username: normalizedUsername,
+            password,
             pin,
             role,
             permissions: permissions || []
