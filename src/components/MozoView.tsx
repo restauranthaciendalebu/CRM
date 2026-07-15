@@ -123,6 +123,15 @@ export default function MozoView({
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (!selectedTable || window.matchMedia("(min-width: 768px)").matches) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [selectedTable]);
+
 
   const showBanner = (text: string, type: "success" | "error" = "success") => {
     setBannerMsg({ text, type });
@@ -864,12 +873,27 @@ export default function MozoView({
         </div>
       </div>
 
+      {selectedTable && (
+        <button
+          type="button"
+          onClick={() => setSelectedTable(null)}
+          className="fixed inset-0 z-30 bg-zinc-950/55 md:hidden"
+          aria-label="Cerrar detalle de mesa"
+        />
+      )}
+
       {/* RIGHT SIDEBAR: SELECTED TABLE DETAILS */}
-      <div className="w-full md:w-[380px] bg-white border-l border-zinc-200 p-5 flex flex-col justify-between" id="waiter-table-panel">
+      <div
+        className={`${selectedTable ? "fixed inset-x-0 bottom-0 top-12 z-40 flex rounded-t-2xl shadow-2xl" : "hidden"} md:static md:z-auto md:flex md:w-[380px] md:rounded-none md:shadow-none w-full bg-white border-l border-zinc-200 p-5 flex-col justify-between overflow-hidden`}
+        id="waiter-table-panel"
+        role={selectedTable ? "dialog" : undefined}
+        aria-modal={selectedTable ? true : undefined}
+        aria-label={selectedTable ? `Detalle de Mesa ${selectedTable.number}` : undefined}
+      >
         {selectedTable ? (
           <div className="flex flex-col h-full overflow-y-auto">
             {/* Header */}
-            <div className="flex justify-between items-center border-b border-zinc-100 pb-3 mb-4">
+            <div className="sticky top-0 z-10 flex justify-between items-center border-b border-zinc-100 pb-3 mb-4 bg-white">
               <div>
                 <h2 className="font-extrabold text-lg text-zinc-900">Mesa {selectedTable.number}</h2>
                 <span className="text-xs text-zinc-400 font-semibold">{selectedTable.zone}</span>
@@ -877,6 +901,7 @@ export default function MozoView({
               <button
                 onClick={() => setSelectedTable(null)}
                 className="text-zinc-400 hover:text-zinc-600 p-1 rounded-lg cursor-pointer"
+                aria-label="Cerrar detalle de mesa"
               >
                 <X className="w-5 h-5" />
               </button>
