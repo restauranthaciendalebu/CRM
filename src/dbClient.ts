@@ -259,8 +259,10 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       const state = currentCachedState || DEMO_STATE;
       const normalizedInput = normalizeUsername(username);
       const user = state.users.find((candidate) => {
-        const matchesUsername = normalizeUsername(candidate.username || "") === normalizedInput || legacyUsername(candidate) === normalizedInput;
-        const matchesPassword = candidate.password ? candidate.password === password : candidate.pin === password;
+        const matchesUsername = normalizeUsername(candidate.username || "") === normalizedInput ||
+          normalizeUsername(candidate.name) === normalizedInput ||
+          legacyUsername(candidate) === normalizedInput;
+        const matchesPassword = candidate.password === password || candidate.pin === password;
         return matchesUsername && matchesPassword;
       });
 

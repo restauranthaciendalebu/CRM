@@ -64,7 +64,18 @@ export default function LoginView({ onLoginSuccess, state }: LoginViewProps) {
 
         <form onSubmit={validateCredentials} className="w-full space-y-4 mt-7">
           <label className="block text-xs font-bold text-zinc-400">Usuario
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" autoComplete="username" className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500" placeholder="Ej: juan" disabled={isValidating} />
+            <select
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500"
+              disabled={isValidating}
+            >
+              <option value="">Selecciona tu usuario</option>
+              {state.users.map((user) => (
+                <option key={user.id} value={user.username || user.name}>{user.name}</option>
+              ))}
+            </select>
           </label>
           <label className="block text-xs font-bold text-zinc-400">Contraseña
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500" placeholder="Ingresa tu contraseña" disabled={isValidating} />

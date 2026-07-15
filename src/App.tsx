@@ -32,7 +32,35 @@ function LoadingScreen() {
   );
 }
 
-export default function App() {
+class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  declare readonly props: Readonly<{ children: React.ReactNode }>;
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error("Error inesperado en la aplicación", error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6 text-center">
+          <h2 className="text-xl font-bold">No se pudo cargar esta pantalla</h2>
+          <p className="text-zinc-400 text-sm mt-2">Actualiza la aplicación para continuar.</p>
+          <button onClick={() => window.location.reload()} className="mt-5 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-zinc-950">
+            Actualizar
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppContent() {
   const [currentRole, setCurrentRole] = useState<"client" | "waiter" | "kitchen" | "admin">("client");
   const [clientTableId, setClientTableId] = useState("t5");
   const [activeUser, setActiveUser] = useState<User | null>(null);
@@ -203,5 +231,13 @@ export default function App() {
         </main>
       </Suspense>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AppErrorBoundary>
+      <AppContent />
+    </AppErrorBoundary>
   );
 }
