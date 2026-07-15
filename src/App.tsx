@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useState } from "react";
+import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { RestaurantState, User } from "./types";
 import { themes } from "./theme";
 import { subscribeToState } from "./stateClient";
@@ -72,6 +72,7 @@ function AppContent() {
   const [state, setState] = useState<RestaurantState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isDemoMode, setIsDemoMode] = useState(false);
+  const hasRequestedDefaultTables = useRef(false);
 
   useEffect(() => {
     const activeTheme = themes.find((t) => t.id === themeId) || themes[0];
@@ -108,6 +109,15 @@ function AppContent() {
 
     return () => unsubscribe();
   }, []);
+
+  useEffect(() => {
+    if (!state || state.tables.length >= 12 || hasRequestedDefaultTables.current) return;
+    hasRequestedDefaultTables.current = true;
+    void fetch("/api/tables/ensure-defaults", { method: "POST" }).catch((error) => {
+      hasRequestedDefaultTables.current = false;
+      console.error("No se pudieron completar las mesas iniciales", error);
+    });
+  }, [state]);
 
   const handleLoginSuccess = (user: User) => {
     setActiveUser(user);

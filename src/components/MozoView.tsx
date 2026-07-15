@@ -34,6 +34,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { printThermalReceipt } from "./ThermalReceipt";
 import { isDirectServiceProduct } from "../orderUtils";
+import AddTableModal from "./AddTableModal";
 
 interface MozoViewProps {
   state: RestaurantState;
@@ -89,6 +90,7 @@ export default function MozoView({
   const [waiterCategoryFilter, setWaiterCategoryFilter] = useState("all");
   const [pendingOrderActionIds, setPendingOrderActionIds] = useState<string[]>([]);
   const [isSendingKitchen, setIsSendingKitchen] = useState(false);
+  const [isAddTableOpen, setIsAddTableOpen] = useState(false);
 
   // Billing modal
   const [isBillingOpen, setIsBillingOpen] = useState(false);
@@ -653,6 +655,14 @@ export default function MozoView({
           </div>
 
           <div className="flex gap-2">
+            <button
+              onClick={() => setIsAddTableOpen(true)}
+              className="h-9 w-9 rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:border-amber-400 hover:text-amber-700 flex items-center justify-center"
+              title="Agregar mesa"
+              aria-label="Agregar mesa"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
             <button
               onClick={() => setIsShiftControlOpen(true)}
               className={`px-3 py-1.5 rounded-lg font-bold text-xs border transition-all cursor-pointer flex items-center gap-1.5 ${
@@ -1639,6 +1649,15 @@ export default function MozoView({
           </div>
         )}
       </AnimatePresence>
+
+      {isAddTableOpen && (
+        <AddTableModal
+          tables={state.tables}
+          operatorName={activeUser?.name || "Garzón"}
+          onClose={() => setIsAddTableOpen(false)}
+          onAdded={(table) => showBanner(`Mesa ${table.number} agregada con éxito.`)}
+        />
+      )}
 
     </div>
   );

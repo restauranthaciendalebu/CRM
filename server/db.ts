@@ -17,6 +17,7 @@ import {
   OrderItem,
   Table
 } from "../src/types";
+import { ensureMinimumTables } from "../src/tableUtils";
 
 const DB_DIR = path.join(process.cwd(), "data");
 const DB_FILE = path.join(DB_DIR, "restaurant_db.json");
@@ -34,7 +35,7 @@ const initialData: RestaurantState = {
     { id: "u3", pin: "3333", name: "Carlos (Cocina)", role: Role.KITCHEN },
   ],
   notifications: [],
-  tables: [
+  tables: ensureMinimumTables([
     { id: "t1", number: 1, seats: 4, status: TableStatus.FREE, zone: "Salón Principal", x: 1, y: 1 },
     { id: "t2", number: 2, seats: 2, status: TableStatus.FREE, zone: "Salón Principal", x: 2, y: 1 },
     { id: "t3", number: 3, seats: 6, status: TableStatus.FREE, zone: "Salón Principal", x: 3, y: 1 },
@@ -45,7 +46,7 @@ const initialData: RestaurantState = {
     { id: "t8", number: 11, seats: 4, status: TableStatus.FREE, zone: "Terraza", x: 2, y: 1 },
     { id: "t9", number: 12, seats: 4, status: TableStatus.FREE, zone: "Terraza", x: 3, y: 1 },
     { id: "t10", number: 20, seats: 4, status: TableStatus.FREE, zone: "VIP", x: 1, y: 1 },
-  ],
+  ]),
   categories: [
     { id: "c1", name: "Entradas", icon: "Soup" },
     { id: "c2", name: "Platos de Fondo", icon: "Utensils" },

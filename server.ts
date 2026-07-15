@@ -19,6 +19,7 @@ import {
   Table,
   RestaurantState
 } from "./src/types.js";
+import { createTable, ensureMinimumTables } from "./src/tableUtils.js";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
@@ -124,6 +125,39 @@ async function startServer() {
   });
 
   // 3. Update table status or layout
+  app.post("/api/tables/ensure-defaults", (req, res) => {
+    LocalDb.updateState(state => {
+      state.tables = ensureMinimumTables(state.tables);
+    });
+    res.json({ success: true, tables: LocalDb.getState().tables });
+  });
+
+  app.post("/api/tables/add", (req, res) => {
+    const zone = typeof req.body.zone === "string" ? req.body.zone.trim() : "";
+    const seats = Number(req.body.seats);
+    const operatorName = typeof req.body.operatorName === "string" && req.body.operatorName.trim()
+      ? req.body.operatorName.trim()
+      : "Personal";
+    if (!zone || !Number.isInteger(seats) || seats < 1 || seats > 30) {
+      return res.status(400).json({ error: "Zona o cantidad de asientos inválida." });
+    }
+
+    let newTable: Table | null = null;
+    LocalDb.updateState(state => {
+      newTable = createTable(state.tables, zone, seats);
+      state.tables.push(newTable);
+      if (!state.auditLogs) state.auditLogs = [];
+      state.auditLogs.push({
+        id: "audit_" + Math.random().toString(36).substring(2, 11),
+        userName: operatorName,
+        action: "Mesa Agregada",
+        details: `${operatorName} agregó la Mesa ${newTable.number} en ${zone}, con ${seats} asientos.`,
+        createdAt: new Date().toISOString(),
+      });
+    });
+    res.json({ success: true, table: newTable });
+  });
+
   app.post("/api/tables", (req, res) => {
     const { tables } = req.body; // array of updated tables
     if (!tables || !Array.isArray(tables)) {

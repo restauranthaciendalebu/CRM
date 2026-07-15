@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import QRGenerator from "./QRGenerator";
+import AddTableModal from "./AddTableModal";
 import { printThermalReceipt } from "./ThermalReceipt";
 import { 
   RestaurantState, 
@@ -99,6 +100,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [staffPermissions, setStaffPermissions] = useState<string[]>([]);
   const [staffError, setStaffError] = useState("");
   const [isStaffSaving, setIsStaffSaving] = useState(false);
+  const [isAddTableOpen, setIsAddTableOpen] = useState(false);
+  const [tableNotice, setTableNotice] = useState("");
 
   // Product management state
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -1774,7 +1777,22 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
 
         {/* TAB 7: QR CODES */}
         {activeTab === "qr" && (
-          <QRGenerator tables={state.tables} restaurantName="Restaurant Hacienda" />
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-200 pb-4">
+              <div>
+                <h2 className="text-base font-extrabold text-zinc-950">Gestión de mesas</h2>
+                <p className="mt-0.5 text-xs text-zinc-500">{state.tables.length} mesas registradas en el sistema.</p>
+              </div>
+              <button
+                onClick={() => setIsAddTableOpen(true)}
+                className="rounded-xl bg-amber-500 px-4 py-2.5 text-xs font-extrabold text-zinc-950 hover:bg-amber-400 flex items-center justify-center gap-1.5"
+              >
+                <Plus className="h-4 w-4" /> Agregar mesa
+              </button>
+            </div>
+            {tableNotice && <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-bold text-emerald-800">{tableNotice}</p>}
+            <QRGenerator tables={state.tables} restaurantName="Restaurant Hacienda" />
+          </div>
         )}
 
         {/* TAB 8: PERSONAL & ROLES MANAGEMENT */}
@@ -2133,6 +2151,18 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
             </div>
           </div>
         </div>
+      )}
+
+      {isAddTableOpen && (
+        <AddTableModal
+          tables={state.tables}
+          operatorName={activeUser?.name || "Administrador"}
+          onClose={() => setIsAddTableOpen(false)}
+          onAdded={(table) => {
+            setTableNotice(`Mesa ${table.number} agregada correctamente.`);
+            window.setTimeout(() => setTableNotice(""), 3500);
+          }}
+        />
       )}
     </div>
   );

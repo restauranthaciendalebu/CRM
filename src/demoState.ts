@@ -4,6 +4,7 @@ import {
   OrderStatus,
   Role,
 } from "./types";
+import { ensureMinimumTables } from "./tableUtils";
 
 export const DEMO_STATE: RestaurantState = {
   "users": [
@@ -27,13 +28,13 @@ export const DEMO_STATE: RestaurantState = {
     }
   ],
   "reservations": [],
-  "tables": [
+  "tables": ensureMinimumTables([
     {
       "zone": "Salón Principal",
       "id": "t1",
       "seats": 2,
       "y": 10,
-      "status": "FREE",
+      "status": TableStatus.FREE,
       "x": 10,
       "number": 1
     },
@@ -41,7 +42,7 @@ export const DEMO_STATE: RestaurantState = {
       "seats": 4,
       "zone": "Salón Principal",
       "id": "t2",
-      "status": "FREE",
+      "status": TableStatus.FREE,
       "x": 30,
       "y": 10,
       "number": 2
@@ -52,12 +53,12 @@ export const DEMO_STATE: RestaurantState = {
       "seats": 4,
       "number": 3,
       "x": 50,
-      "status": "FREE",
+      "status": TableStatus.FREE,
       "y": 10
     },
     {
       "number": 4,
-      "status": "FREE",
+      "status": TableStatus.FREE,
       "y": 40,
       "x": 10,
       "seats": 6,
@@ -67,7 +68,7 @@ export const DEMO_STATE: RestaurantState = {
     {
       "y": 40,
       "x": 30,
-      "status": "FREE",
+      "status": TableStatus.FREE,
       "number": 5,
       "zone": "Terraza",
       "id": "t5",
@@ -77,7 +78,7 @@ export const DEMO_STATE: RestaurantState = {
       "zone": "VIP",
       "id": "t6",
       "seats": 8,
-      "status": "FREE",
+      "status": TableStatus.FREE,
       "y": 40,
       "x": 65,
       "number": 6
@@ -87,7 +88,7 @@ export const DEMO_STATE: RestaurantState = {
       "id": "t7",
       "seats": 4,
       "number": 7,
-      "status": "FREE",
+      "status": TableStatus.FREE,
       "y": 10,
       "x": 70
     },
@@ -97,10 +98,10 @@ export const DEMO_STATE: RestaurantState = {
       "seats": 2,
       "x": 50,
       "y": 40,
-      "status": "FREE",
+      "status": TableStatus.FREE,
       "number": 8
     }
-  ],
+  ]),
   "ingredients": [
     {
       "unit": "g",
