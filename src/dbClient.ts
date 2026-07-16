@@ -371,7 +371,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           tableId: id,
           waiterId: waiterId || null,
           status: OrderStatus.PREPARING,
-          customerCount: customerCount || 1,
+          customerCount: customerCount || 2,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           items: []
@@ -383,7 +383,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           userId: waiterId || undefined,
           userName: waiterName,
           action: "Mesa Abierta",
-          details: `${waiterName} abrió la Mesa ${table.number} para ${customerCount || 1} personas.`,
+          details: `${waiterName} abrió la Mesa ${table.number} para ${customerCount || 2} personas.`,
           createdAt: new Date().toISOString()
         });
       });
@@ -552,8 +552,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
               // Beverages/items served directly → skip kitchen, mark as READY
               item.status = OrderItemStatus.READY;
             } else {
-              // Food/prepared items → send to kitchen
-              item.status = OrderItemStatus.PREPARING;
+              // Food/prepared items remain highlighted until kitchen acknowledges them.
+              item.status = OrderItemStatus.SENT_TO_KITCHEN;
               sentItemIds.add(item.id);
             }
             updatedCount++;
@@ -564,14 +564,23 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           const now = new Date().toISOString();
           deductStockForOrder({
             ...order,
-            items: order.items.filter(it => sentItemIds.has(it.id) && it.status === OrderItemStatus.PREPARING)
+            items: order.items.filter(it => sentItemIds.has(it.id))
           }, s);
 
+          const hasKitchenQueueItems = order.items.some(item =>
+            item.status === OrderItemStatus.SENT_TO_KITCHEN || item.status === OrderItemStatus.RECEIVED
+          );
           const hasPreparingItems = order.items.some(item => item.status === OrderItemStatus.PREPARING);
           const allItemsReady = order.items.length > 0 && order.items.every(item =>
             item.status === OrderItemStatus.READY || item.status === OrderItemStatus.DELIVERED
           );
-          order.status = allItemsReady && !hasPreparingItems ? OrderStatus.READY : OrderStatus.PREPARING;
+          order.status = allItemsReady
+            ? OrderStatus.READY
+            : hasPreparingItems
+            ? OrderStatus.PREPARING
+            : hasKitchenQueueItems
+            ? OrderStatus.PENDING_KITCHEN
+            : order.status;
           order.kitchenSentAt = now;
           order.updatedAt = now;
         } else {
@@ -594,28 +603,42 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       const updated = await updateState(s => {
         const order = s.orders.find(o => o.id === id);
         if (order) {
-          order.status = OrderStatus.PREPARING;
+          const now = new Date().toISOString();
           order.waiterId = waiterId;
-          order.updatedAt = new Date().toISOString();
-          
+          order.updatedAt = now;
+          const kitchenItemIds = new Set<string>();
           order.items.forEach(it => {
             if (it.status === OrderItemStatus.PENDING) {
               const product = s.products.find(p => p.id === it.productId);
               if (isDirectServiceProduct(product)) {
                 it.status = OrderItemStatus.READY;
               } else {
-                it.status = OrderItemStatus.PREPARING;
+                it.status = OrderItemStatus.SENT_TO_KITCHEN;
+                kitchenItemIds.add(it.id);
               }
             }
           });
 
+          const hasKitchenQueueItems = order.items.some(item =>
+            item.status === OrderItemStatus.SENT_TO_KITCHEN || item.status === OrderItemStatus.RECEIVED
+          );
           const hasPreparingItems = order.items.some(item => item.status === OrderItemStatus.PREPARING);
           const allItemsReady = order.items.length > 0 && order.items.every(item =>
             item.status === OrderItemStatus.READY || item.status === OrderItemStatus.DELIVERED
           );
-          order.status = allItemsReady && !hasPreparingItems ? OrderStatus.READY : OrderStatus.PREPARING;
-          
-          deductStockForOrder(order, s);
+          order.status = allItemsReady
+            ? OrderStatus.READY
+            : hasPreparingItems
+            ? OrderStatus.PREPARING
+            : hasKitchenQueueItems
+            ? OrderStatus.PENDING_KITCHEN
+            : order.status;
+          if (kitchenItemIds.size > 0) order.kitchenSentAt = now;
+
+          deductStockForOrder({
+            ...order,
+            items: order.items.filter(item => kitchenItemIds.has(item.id)),
+          }, s);
         }
       });
       return createResponse({ success: true, order: updated.orders.find(o => o.id === id) });
@@ -634,7 +657,11 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           if (item) {
             const product = s.products.find(p => p.id === item.productId);
             const requestedStatus = status as OrderItemStatus;
-            item.status = isDirectServiceProduct(product) && requestedStatus === OrderItemStatus.PREPARING
+            item.status = isDirectServiceProduct(product) && (
+              requestedStatus === OrderItemStatus.SENT_TO_KITCHEN ||
+              requestedStatus === OrderItemStatus.RECEIVED ||
+              requestedStatus === OrderItemStatus.PREPARING
+            )
               ? OrderItemStatus.READY
               : requestedStatus;
             order.updatedAt = new Date().toISOString();
@@ -643,6 +670,9 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           const allReady = order.items.every(it => it.status === OrderItemStatus.READY || it.status === OrderItemStatus.DELIVERED);
           const allDelivered = order.items.every(it => it.status === OrderItemStatus.DELIVERED);
           const anyPreparing = order.items.some(it => it.status === OrderItemStatus.PREPARING);
+          const anyKitchenQueue = order.items.some(it =>
+            it.status === OrderItemStatus.SENT_TO_KITCHEN || it.status === OrderItemStatus.RECEIVED
+          );
 
           if (allDelivered) {
             order.status = OrderStatus.DELIVERED;
@@ -650,6 +680,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             order.status = OrderStatus.READY;
           } else if (anyPreparing) {
             order.status = OrderStatus.PREPARING;
+          } else if (anyKitchenQueue) {
+            order.status = OrderStatus.PENDING_KITCHEN;
           }
         }
       });
@@ -704,6 +736,12 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         const order = s.orders.find(o => o.id === id);
         if (!order) {
           errorMsg = "Orden no encontrada";
+          return;
+        }
+        if (!order.items.length || order.items.some(item =>
+          item.status !== OrderItemStatus.READY && item.status !== OrderItemStatus.DELIVERED
+        )) {
+          errorMsg = "No se puede cobrar hasta que todos los pedidos salgan de cocina";
           return;
         }
 

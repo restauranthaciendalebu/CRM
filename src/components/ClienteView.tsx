@@ -701,6 +701,11 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                     <ChefHat className="w-3.5 h-3.5" /> En Preparación
                   </span>
                 )}
+                {currentOrder.status === OrderStatus.PENDING_KITCHEN && (
+                  <span className="bg-amber-100 text-amber-800 border border-amber-200 text-xs px-2.5 py-1 rounded-full font-bold flex items-center gap-1 animate-pulse">
+                    <Clock className="w-3.5 h-3.5" /> Enviado a Cocina
+                  </span>
+                )}
                 {currentOrder.status === OrderStatus.READY && (
                   <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs px-2.5 py-1 rounded-full font-bold flex items-center gap-1 animate-bounce">
                     <Check className="w-3.5 h-3.5" /> ¡Listo para servir!
@@ -720,6 +725,7 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                 Confirmado
               </div>
               <div className={`py-1 rounded border ${
+                currentOrder.status === OrderStatus.PENDING_KITCHEN ||
                 currentOrder.status === OrderStatus.PREPARING || 
                 currentOrder.status === OrderStatus.READY || 
                 currentOrder.status === OrderStatus.DELIVERED 
@@ -756,6 +762,12 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                     <div>
                       {it.status === OrderItemStatus.PENDING && (
                         <span className="text-zinc-400 text-[10px]">En cola</span>
+                      )}
+                      {it.status === OrderItemStatus.SENT_TO_KITCHEN && (
+                        <span className="text-amber-600 text-[10px] font-bold">Enviado a cocina</span>
+                      )}
+                      {it.status === OrderItemStatus.RECEIVED && (
+                        <span className="text-cyan-600 text-[10px] font-bold">Recepcionado</span>
                       )}
                       {it.status === OrderItemStatus.PREPARING && (
                         <span className="text-blue-500 text-[10px] font-bold animate-pulse">Preparando</span>

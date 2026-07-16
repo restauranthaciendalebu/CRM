@@ -20,6 +20,7 @@ import {
   RestaurantState
 } from "./src/types.js";
 import { createTable, ensureMinimumTables } from "./src/tableUtils.js";
+import { isDirectServiceProduct } from "./src/orderUtils.js";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
@@ -216,7 +217,7 @@ async function startServer() {
         tableId: id,
         waiterId: waiterId || null,
         status: OrderStatus.PREPARING, // Starts preparing directly if opened by waiter
-        customerCount: customerCount || 1,
+        customerCount: customerCount || 2,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         items: []
@@ -228,7 +229,7 @@ async function startServer() {
         userId: waiterId || undefined,
         userName: waiterName,
         action: "Mesa Abierta",
-        details: `${waiterName} abrió la Mesa ${t ? t.number : "?"} para ${customerCount || 1} personas.`,
+        details: `${waiterName} abrió la Mesa ${t ? t.number : "?"} para ${customerCount || 2} personas.`,
         createdAt: new Date().toISOString()
       });
     });
@@ -387,13 +388,18 @@ async function startServer() {
         return;
       }
 
-      // Find all PENDING items and send them to PREPARING
+      // Send food to the kitchen queue; direct-service products skip the KDS.
       let updatedCount = 0;
       const sentItemIds = new Set<string>();
       order.items.forEach(item => {
         if (item.status === OrderItemStatus.PENDING) {
-          item.status = OrderItemStatus.PREPARING;
-          sentItemIds.add(item.id);
+          const product = state.products.find(candidate => candidate.id === item.productId);
+          if (isDirectServiceProduct(product)) {
+            item.status = OrderItemStatus.READY;
+          } else {
+            item.status = OrderItemStatus.SENT_TO_KITCHEN;
+            sentItemIds.add(item.id);
+          }
           updatedCount++;
         }
       });
@@ -403,10 +409,10 @@ async function startServer() {
         // Deduct ingredients stock
         LocalDb.deductStockForOrder({
           ...order,
-          items: order.items.filter(it => sentItemIds.has(it.id) && it.status === OrderItemStatus.PREPARING)
+          items: order.items.filter(it => sentItemIds.has(it.id))
         }, state);
 
-        order.status = OrderStatus.PREPARING;
+        order.status = sentItemIds.size > 0 ? OrderStatus.PENDING_KITCHEN : OrderStatus.READY;
         order.kitchenSentAt = now;
         order.updatedAt = now;
         success = true;
@@ -429,18 +435,29 @@ async function startServer() {
     LocalDb.updateState(state => {
       const order = state.orders.find(o => o.id === id);
       if (order) {
-        order.status = OrderStatus.PREPARING;
+        const now = new Date().toISOString();
         order.waiterId = waiterId;
-        order.updatedAt = new Date().toISOString();
+        order.updatedAt = now;
         
-        // Mark pending items as preparing and deduct ingredients stock
+        const kitchenItemIds = new Set<string>();
         order.items.forEach(it => {
           if (it.status === OrderItemStatus.PENDING) {
-            it.status = OrderItemStatus.PREPARING;
+            const product = state.products.find(candidate => candidate.id === it.productId);
+            if (isDirectServiceProduct(product)) {
+              it.status = OrderItemStatus.READY;
+            } else {
+              it.status = OrderItemStatus.SENT_TO_KITCHEN;
+              kitchenItemIds.add(it.id);
+            }
           }
         });
-        
-        LocalDb.deductStockForOrder(order, state);
+
+        order.status = kitchenItemIds.size > 0 ? OrderStatus.PENDING_KITCHEN : OrderStatus.READY;
+        if (kitchenItemIds.size > 0) order.kitchenSentAt = now;
+        LocalDb.deductStockForOrder({
+          ...order,
+          items: order.items.filter(item => kitchenItemIds.has(item.id)),
+        }, state);
       }
     });
 
@@ -450,7 +467,7 @@ async function startServer() {
   // 7. Update kitchen item status (KDS actions)
   app.post("/api/orders/:id/items/:itemId/status", (req, res) => {
     const { id, itemId } = req.params;
-    const { status } = req.body; // PENDING, PREPARING, READY, DELIVERED
+    const { status } = req.body;
 
     if (!status) {
       return res.status(400).json({ error: "Status is required" });
@@ -461,7 +478,15 @@ async function startServer() {
       if (order) {
         const item = order.items.find(it => it.id === itemId);
         if (item) {
-          item.status = status as OrderItemStatus;
+          const product = state.products.find(candidate => candidate.id === item.productId);
+          const requestedStatus = status as OrderItemStatus;
+          item.status = isDirectServiceProduct(product) && (
+            requestedStatus === OrderItemStatus.SENT_TO_KITCHEN ||
+            requestedStatus === OrderItemStatus.RECEIVED ||
+            requestedStatus === OrderItemStatus.PREPARING
+          )
+            ? OrderItemStatus.READY
+            : requestedStatus;
           order.updatedAt = new Date().toISOString();
         }
 
@@ -469,6 +494,9 @@ async function startServer() {
         const allReady = order.items.every(it => it.status === OrderItemStatus.READY || it.status === OrderItemStatus.DELIVERED);
         const allDelivered = order.items.every(it => it.status === OrderItemStatus.DELIVERED);
         const anyPreparing = order.items.some(it => it.status === OrderItemStatus.PREPARING);
+        const anyKitchenQueue = order.items.some(it =>
+          it.status === OrderItemStatus.SENT_TO_KITCHEN || it.status === OrderItemStatus.RECEIVED
+        );
 
         if (allDelivered) {
           order.status = OrderStatus.DELIVERED;
@@ -476,6 +504,8 @@ async function startServer() {
           order.status = OrderStatus.READY;
         } else if (anyPreparing) {
           order.status = OrderStatus.PREPARING;
+        } else if (anyKitchenQueue) {
+          order.status = OrderStatus.PENDING_KITCHEN;
         }
       }
     });
@@ -536,6 +566,12 @@ async function startServer() {
       const order = state.orders.find(o => o.id === id);
       if (!order) {
         errorMsg = "Orden no encontrada";
+        return;
+      }
+      if (!order.items.length || order.items.some(item =>
+        item.status !== OrderItemStatus.READY && item.status !== OrderItemStatus.DELIVERED
+      )) {
+        errorMsg = "No se puede cobrar hasta que todos los pedidos salgan de cocina";
         return;
       }
 

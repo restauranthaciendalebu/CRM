@@ -203,6 +203,11 @@ export default function MozoView({
     ? state.orders.find(o => o.tableId === selectedTable.id && o.status !== OrderStatus.CLOSED)
     : null;
   const hasPendingKitchenItems = activeOrder?.items.some((it) => it.status === OrderItemStatus.PENDING) ?? false;
+  const canBillActiveOrder = Boolean(
+    activeOrder?.items.length && activeOrder.items.every((item) =>
+      item.status === OrderItemStatus.READY || item.status === OrderItemStatus.DELIVERED
+    )
+  );
   const authorizedCreditCustomers = state.customers.filter((c) => c.isCreditAuthorized);
   const selectedBillingCreditCustomer = authorizedCreditCustomers.find((c) => c.id === billingCreditCustomerId);
 
@@ -226,6 +231,7 @@ export default function MozoView({
       });
       if (res.ok) {
         setIsOpeningTable(false);
+        setOpeningGuestCount(2);
         showBanner("Mesa abierta con éxito.");
         refreshStateIfNeeded();
         // Automatically select table to view
@@ -399,14 +405,23 @@ export default function MozoView({
             const product = nextState.products.find((candidate) => candidate.id === item.productId);
             item.status = isDirectServiceProduct(product)
               ? OrderItemStatus.READY
-              : OrderItemStatus.PREPARING;
+              : OrderItemStatus.SENT_TO_KITCHEN;
           }
         });
+        const hasKitchenQueueItems = order.items.some((item) =>
+          item.status === OrderItemStatus.SENT_TO_KITCHEN || item.status === OrderItemStatus.RECEIVED
+        );
         const hasPreparingItems = order.items.some((item) => item.status === OrderItemStatus.PREPARING);
         const allItemsReady = order.items.length > 0 && order.items.every((item) =>
           item.status === OrderItemStatus.READY || item.status === OrderItemStatus.DELIVERED
         );
-        order.status = allItemsReady && !hasPreparingItems ? OrderStatus.READY : OrderStatus.PREPARING;
+        order.status = allItemsReady
+          ? OrderStatus.READY
+          : hasPreparingItems
+          ? OrderStatus.PREPARING
+          : hasKitchenQueueItems
+          ? OrderStatus.PENDING_KITCHEN
+          : order.status;
         order.kitchenSentAt = sentAt;
         order.updatedAt = sentAt;
       });
@@ -437,14 +452,8 @@ export default function MozoView({
   // Change individual order item status
   const handleUpdateItemStatus = async (itemId: string, currentStatus: OrderItemStatus) => {
     if (!activeOrder || pendingOrderActionIds.includes(itemId)) return;
-    let nextStatus: OrderItemStatus;
-    const product = state.products.find((candidate) => candidate.id === activeOrder.items.find((item) => item.id === itemId)?.productId);
-    if (currentStatus === OrderItemStatus.PENDING) {
-      nextStatus = isDirectServiceProduct(product) ? OrderItemStatus.READY : OrderItemStatus.PREPARING;
-    }
-    else if (currentStatus === OrderItemStatus.PREPARING) nextStatus = OrderItemStatus.READY;
-    else if (currentStatus === OrderItemStatus.READY) nextStatus = OrderItemStatus.DELIVERED;
-    else return; // Already delivered
+    if (currentStatus !== OrderItemStatus.READY) return;
+    const nextStatus = OrderItemStatus.DELIVERED;
 
     setPendingOrderActionIds(prev => [...prev, itemId]);
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
@@ -535,6 +544,11 @@ export default function MozoView({
 
   const handleCloseBillSubmit = async () => {
     if (!activeOrder) return;
+    if (!canBillActiveOrder) {
+      setIsBillingOpen(false);
+      showBanner("No puedes cobrar hasta que todos los pedidos salgan de cocina.", "error");
+      return;
+    }
     if (paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer) {
       showBanner("Selecciona una cuenta autorizada para cargar el consumo.", "error");
       return;
@@ -961,6 +975,7 @@ export default function MozoView({
                 onClick={() => {
                   setSelectedTable(tbl);
                   setIsOpeningTable(false);
+                  if (tbl.status === TableStatus.FREE) setOpeningGuestCount(2);
                 }}
                 className={`border-2 rounded-2xl p-3.5 flex flex-col justify-between items-start text-left transition-all min-h-[130px] relative cursor-pointer ${
                   isSelected ? "border-zinc-900 ring-2 ring-amber-500/30 shadow-lg scale-[1.02]" : "hover:shadow-md"
@@ -1055,6 +1070,7 @@ export default function MozoView({
                       showBanner("Debes abrir la caja / turno de trabajo primero.", "error");
                       return;
                     }
+                    setOpeningGuestCount(2);
                     setIsOpeningTable(true);
                   }}
                   className="w-full bg-zinc-950 hover:bg-amber-600 text-white font-bold py-3 px-4 rounded-xl text-xs shadow-md transition-colors cursor-pointer"
@@ -1216,22 +1232,28 @@ export default function MozoView({
                                 )}
                                 <button
                                   onClick={() => handleUpdateItemStatus(it.id, it.status)}
-                                  disabled={isUpdating || it.status === OrderItemStatus.DELIVERED}
-                                  className={`px-2 py-1 rounded-md font-bold text-[10px] border transition-all cursor-pointer ${
+                                  disabled={isUpdating || it.status !== OrderItemStatus.READY}
+                                  className={`px-2 py-1 rounded-md font-bold text-[10px] border transition-all ${
                                     isUpdating
                                       ? "bg-zinc-100 border-zinc-200 text-zinc-400 cursor-wait"
                                       :
                                     it.status === OrderItemStatus.PENDING
-                                      ? "bg-zinc-100 border-zinc-200 text-zinc-700 hover:bg-amber-100"
+                                      ? "bg-zinc-100 border-zinc-200 text-zinc-700 cursor-not-allowed"
+                                      : it.status === OrderItemStatus.SENT_TO_KITCHEN
+                                      ? "bg-amber-50 border-amber-200 text-amber-700 cursor-not-allowed"
+                                      : it.status === OrderItemStatus.RECEIVED
+                                      ? "bg-cyan-50 border-cyan-200 text-cyan-700 cursor-not-allowed"
                                       : it.status === OrderItemStatus.PREPARING
-                                      ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-emerald-100"
+                                      ? "bg-blue-50 border-blue-200 text-blue-700 cursor-not-allowed"
                                       : it.status === OrderItemStatus.READY
-                                      ? "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100 animate-bounce"
+                                      ? "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100 animate-bounce cursor-pointer"
                                       : "bg-zinc-50 border-zinc-200 text-zinc-400 cursor-not-allowed"
                                   }`}
                                 >
                                   {isUpdating && "Actualizando..."}
                                   {!isUpdating && it.status === OrderItemStatus.PENDING && "Pendiente"}
+                                  {!isUpdating && it.status === OrderItemStatus.SENT_TO_KITCHEN && "Enviado a cocina"}
+                                  {!isUpdating && it.status === OrderItemStatus.RECEIVED && "Recepcionado"}
                                   {!isUpdating && it.status === OrderItemStatus.PREPARING && "Preparando"}
                                   {!isUpdating && it.status === OrderItemStatus.READY && "Entregar"}
                                   {!isUpdating && it.status === OrderItemStatus.DELIVERED && "Servido ✔"}
@@ -1280,14 +1302,22 @@ export default function MozoView({
 
                     <button
                       onClick={() => {
+                        if (!canBillActiveOrder) return;
                         setIsBillingOpen(true);
                         setPaymentMethod(PaymentMethod.CASH);
                         setBillingCreditCustomerId("");
                         setBillingSplitParts(activeOrder.customerCount || 2);
                       }}
-                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold py-3.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                      disabled={!canBillActiveOrder}
+                      title={canBillActiveOrder ? "Cobrar y cerrar mesa" : "Disponible cuando todos los pedidos salgan de cocina"}
+                      className={`w-full font-extrabold py-3.5 rounded-xl text-xs flex items-center justify-center gap-2 transition-colors ${
+                        canBillActiveOrder
+                          ? "bg-emerald-600 hover:bg-emerald-700 text-white shadow-md cursor-pointer"
+                          : "bg-zinc-100 border border-zinc-200 text-zinc-400 cursor-not-allowed"
+                      }`}
                     >
-                      <Calculator className="w-4 h-4" /> Cobrar / Cerrar Mesa
+                      {canBillActiveOrder ? <Calculator className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
+                      {canBillActiveOrder ? "Cobrar / Cerrar Mesa" : "Esperando salida de cocina"}
                     </button>
                   </div>
                 )}

@@ -22,6 +22,8 @@ export enum OrderStatus {
 
 export enum OrderItemStatus {
   PENDING = "PENDING",
+  SENT_TO_KITCHEN = "SENT_TO_KITCHEN",
+  RECEIVED = "RECEIVED",
   PREPARING = "PREPARING",
   READY = "READY",
   DELIVERED = "DELIVERED",
