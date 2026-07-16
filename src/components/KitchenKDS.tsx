@@ -296,9 +296,9 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                             </span>
                             
                             {/* Modifiers List */}
-                            {it.selectedModifiers.map((m) => (
+                            {it.selectedModifiers.filter((m) => m.extraPrice >= 0).map((m) => (
                               <span key={m.optionId} className="text-[10px] text-zinc-400 block italic ml-8">
-                                + {m.name}
+                                {m.extraPrice > 0 ? "+ " : m.extraPrice < 0 ? "- " : ""}{m.name}
                               </span>
                             ))}
 

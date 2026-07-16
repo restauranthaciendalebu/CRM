@@ -468,6 +468,67 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       return createResponse({ success: true, order: createdOrder });
     }
 
+    const customerCountMatch = path.match(/^\/api\/orders\/([^\/]+)\/customer-count$/);
+    if (customerCountMatch && method === "POST") {
+      const orderId = customerCountMatch[1];
+      const customerCount = Number(body.customerCount);
+      if (!Number.isInteger(customerCount) || customerCount < 1 || customerCount > 30) {
+        return createResponse({ error: "La cantidad de comensales debe estar entre 1 y 30." }, 400);
+      }
+
+      let errorMsg = "";
+      const updated = await updateState(s => {
+        const order = s.orders.find(o => o.id === orderId && o.status !== OrderStatus.CLOSED);
+        if (!order) {
+          errorMsg = "Comanda activa no encontrada.";
+          return;
+        }
+        const previousCount = order.customerCount;
+        order.customerCount = customerCount;
+        order.updatedAt = new Date().toISOString();
+        const user = s.users.find(candidate => candidate.id === body.userId);
+        const table = s.tables.find(candidate => candidate.id === order.tableId);
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          userId: user?.id,
+          userName: user?.name || "Mozo",
+          action: "Comensales Actualizados",
+          details: `Mesa ${table?.number || "?"}: ${previousCount} a ${customerCount} comensales.`,
+          createdAt: new Date().toISOString(),
+        });
+      });
+      if (errorMsg) return createResponse({ error: errorMsg }, 404);
+      return createResponse({ success: true, order: updated.orders.find(o => o.id === orderId) });
+    }
+
+    const deleteOrderItemMatch = path.match(/^\/api\/orders\/([^\/]+)\/items\/([^\/]+)$/);
+    if (deleteOrderItemMatch && method === "DELETE") {
+      const orderId = deleteOrderItemMatch[1];
+      const itemId = deleteOrderItemMatch[2];
+      let errorMsg = "";
+      const updated = await updateState(s => {
+        const order = s.orders.find(o => o.id === orderId && o.status !== OrderStatus.CLOSED);
+        if (!order) {
+          errorMsg = "Comanda activa no encontrada.";
+          return;
+        }
+        const item = order.items.find(candidate => candidate.id === itemId);
+        if (!item) {
+          errorMsg = "Ítem no encontrado.";
+          return;
+        }
+        if (item.status !== OrderItemStatus.PENDING) {
+          errorMsg = "Solo se pueden eliminar ítems que todavía están pendientes.";
+          return;
+        }
+        if (body.removeAll !== true && item.quantity > 1) item.quantity -= 1;
+        else order.items = order.items.filter(candidate => candidate.id !== itemId);
+        order.updatedAt = new Date().toISOString();
+      });
+      if (errorMsg) return createResponse({ error: errorMsg }, 400);
+      return createResponse({ success: true, order: updated.orders.find(o => o.id === orderId) });
+    }
+
     // 5. Send order items to kitchen
     const sendToKitchenMatch = path.match(/^\/api\/orders\/([^\/]+)\/send-to-kitchen$/);
     if (sendToKitchenMatch && method === "POST") {

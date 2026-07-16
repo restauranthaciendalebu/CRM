@@ -30,7 +30,9 @@ import {
   Percent, 
   Users,
   Printer,
-  ReceiptText
+  ReceiptText,
+  Trash2,
+  Minus
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { printThermalReceipt } from "./ThermalReceipt";
@@ -87,6 +89,9 @@ export default function MozoView({
     quantity: number;
     notes: string;
     modifiers: SelectedItemModifier[];
+    adjustmentType: "extra" | "discount";
+    adjustmentAmount: number;
+    adjustmentLabel: string;
   }>>([]);
   const [waiterSearchTerm, setWaiterSearchTerm] = useState("");
   const [waiterCategoryFilter, setWaiterCategoryFilter] = useState("all");
@@ -94,6 +99,7 @@ export default function MozoView({
   const [isSendingKitchen, setIsSendingKitchen] = useState(false);
   const [isAddTableOpen, setIsAddTableOpen] = useState(false);
   const [isReceiptHistoryOpen, setIsReceiptHistoryOpen] = useState(false);
+  const [isUpdatingGuestCount, setIsUpdatingGuestCount] = useState(false);
 
   // Billing modal
   const [isBillingOpen, setIsBillingOpen] = useState(false);
@@ -234,9 +240,52 @@ export default function MozoView({
     }
   };
 
+  const handleUpdateGuestCount = async (nextCount: number) => {
+    if (!activeOrder || isUpdatingGuestCount || nextCount < 1 || nextCount > 30) return;
+    setIsUpdatingGuestCount(true);
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        const order = nextState.orders.find((candidate) => candidate.id === activeOrder.id);
+        if (order) order.customerCount = nextCount;
+      });
+    }
+    try {
+      const res = await fetch(`/api/orders/${activeOrder.id}/customer-count`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerCount: nextCount, userId: activeUser?.id }),
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+        showBanner(error.error || "No se pudo actualizar los comensales.", "error");
+      } else {
+        showBanner(`Mesa actualizada a ${nextCount} comensales.`);
+        refreshStateIfNeeded();
+      }
+    } catch {
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+      showBanner("Error al actualizar los comensales.", "error");
+    } finally {
+      setIsUpdatingGuestCount(false);
+    }
+  };
+
+  const getWaiterCartAdjustment = (item: (typeof waiterCart)[number]) => {
+    const amount = Math.round(Math.max(0, Number(item.adjustmentAmount) || 0));
+    return item.adjustmentType === "discount" ? -amount : amount;
+  };
+
+  const getWaiterCartUnitPrice = (item: (typeof waiterCart)[number]) =>
+    Math.max(0, item.product.price + getWaiterCartAdjustment(item));
+
   // Submit new waiter added items to existing order
   const handleAddItemsToOrder = async () => {
     if (waiterCart.length === 0 || !activeOrder) return;
+    if (waiterCart.some((item) => item.adjustmentAmount > 0 && !item.adjustmentLabel.trim())) {
+      showBanner("Escribe el motivo de cada extra o descuento.", "error");
+      return;
+    }
     try {
       const res = await fetch("/api/orders", {
         method: "POST",
@@ -245,13 +294,22 @@ export default function MozoView({
           tableId: selectedTable?.id,
           waiterId: activeUser?.id,
           isWaiter: true,
-          items: waiterCart.map(it => ({
+          items: waiterCart.map((it, index) => {
+            const adjustment = getWaiterCartAdjustment(it);
+            const customModifier: SelectedItemModifier[] = adjustment !== 0 ? [{
+              modifierId: "waiter_price_adjustment",
+              optionId: `waiter_adjustment_${Date.now()}_${index}`,
+              name: `${adjustment > 0 ? "Extra" : "Descuento"}: ${it.adjustmentLabel.trim() || "Ajuste manual"}`,
+              extraPrice: adjustment,
+            }] : [];
+            return {
             productId: it.product.id,
             quantity: it.quantity,
             notes: it.notes,
-            selectedModifiers: it.modifiers,
+            selectedModifiers: [...it.modifiers, ...customModifier],
             tanda: it.product.categoryId === "c1" ? 1 : 2
-          }))
+            };
+          })
         })
       });
 
@@ -263,6 +321,50 @@ export default function MozoView({
       }
     } catch (e) {
       showBanner("Error de conexión", "error");
+    }
+  };
+
+  const handleDeletePendingItem = async (itemId: string, removeAll = true) => {
+    if (!activeOrder || pendingOrderActionIds.includes(itemId)) return;
+    const item = activeOrder.items.find((candidate) => candidate.id === itemId);
+    if (!item || item.status !== OrderItemStatus.PENDING) return;
+    const removingOne = !removeAll && item.quantity > 1;
+    const confirmation = removingOne
+      ? "¿Quitar una unidad de este ítem pendiente?"
+      : "¿Eliminar toda esta línea pendiente de la comanda?";
+    if (!window.confirm(confirmation)) return;
+
+    setPendingOrderActionIds((previous) => [...previous, itemId]);
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        const order = nextState.orders.find((candidate) => candidate.id === activeOrder.id);
+        if (order) {
+          const optimisticItem = order.items.find((candidate) => candidate.id === itemId);
+          if (optimisticItem && removingOne) optimisticItem.quantity -= 1;
+          else order.items = order.items.filter((candidate) => candidate.id !== itemId);
+          order.updatedAt = new Date().toISOString();
+        }
+      });
+    }
+    try {
+      const res = await fetch(`/api/orders/${activeOrder.id}/items/${itemId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ removeAll }),
+      });
+      if (!res.ok) {
+        const error = await res.json();
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+        showBanner(error.error || "No se pudo eliminar el ítem.", "error");
+      } else {
+        showBanner(removingOne ? "Se quitó una unidad pendiente." : "Ítem pendiente eliminado.");
+        refreshStateIfNeeded();
+      }
+    } catch {
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+      showBanner("Error al eliminar el ítem.", "error");
+    } finally {
+      setPendingOrderActionIds((previous) => previous.filter((id) => id !== itemId));
     }
   };
 
@@ -545,6 +647,8 @@ export default function MozoView({
 
   // Format Helper
   const formatCLP = (val: number) => "$" + Math.round(val).toLocaleString("es-CL");
+  const formatSignedCLP = (val: number) =>
+    `${val >= 0 ? "+" : "-"}$${Math.abs(Math.round(val)).toLocaleString("es-CL")}`;
 
   // RENDER SECURITY SCREEN IF NOT AUTHENTICATED
   if (!activeUser) {
@@ -989,9 +1093,31 @@ export default function MozoView({
                     </div>
                     <div>
                       <span className="text-zinc-500 font-semibold block">Comensales:</span>
-                      <span className="font-bold text-zinc-900">
-                        {activeOrder ? activeOrder.customerCount : 0} pers.
-                      </span>
+                      <div className="mt-1 flex items-center gap-1 rounded-lg border border-zinc-200 bg-white p-0.5">
+                        <button
+                          type="button"
+                          title="Quitar comensal"
+                          aria-label="Quitar comensal"
+                          onClick={() => activeOrder && handleUpdateGuestCount(activeOrder.customerCount - 1)}
+                          disabled={!activeOrder || activeOrder.customerCount <= 1 || isUpdatingGuestCount}
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-100 disabled:opacity-35"
+                        >
+                          <Minus className="h-3.5 w-3.5" />
+                        </button>
+                        <span className="min-w-14 text-center font-bold text-zinc-900">
+                          {activeOrder ? activeOrder.customerCount : 0} pers.
+                        </span>
+                        <button
+                          type="button"
+                          title="Agregar comensal"
+                          aria-label="Agregar comensal"
+                          onClick={() => activeOrder && handleUpdateGuestCount(activeOrder.customerCount + 1)}
+                          disabled={!activeOrder || activeOrder.customerCount >= 30 || isUpdatingGuestCount}
+                          className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 hover:bg-zinc-100 disabled:opacity-35"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -1033,7 +1159,8 @@ export default function MozoView({
                                 <span className="font-extrabold text-zinc-900">{it.quantity}x {prod.name}</span>
                                 {it.selectedModifiers.map(m => (
                                   <span key={m.optionId} className="text-zinc-400 text-[10px] block italic ml-2">
-                                    + {m.name}
+                                    {m.extraPrice > 0 ? "+ " : m.extraPrice < 0 ? "- " : ""}{m.name}
+                                    {m.extraPrice !== 0 && ` (${formatSignedCLP(m.extraPrice)})`}
                                   </span>
                                 ))}
                                 {it.notes && (
@@ -1043,28 +1170,56 @@ export default function MozoView({
                                 )}
                               </div>
 
-                              <button
-                                onClick={() => handleUpdateItemStatus(it.id, it.status)}
-                                disabled={isUpdating || it.status === OrderItemStatus.DELIVERED}
-                                className={`px-2 py-1 rounded-md font-bold text-[10px] border transition-all cursor-pointer ${
-                                  isUpdating
-                                    ? "bg-zinc-100 border-zinc-200 text-zinc-400 cursor-wait"
-                                    :
-                                  it.status === OrderItemStatus.PENDING
-                                    ? "bg-zinc-100 border-zinc-200 text-zinc-700 hover:bg-amber-100"
-                                    : it.status === OrderItemStatus.PREPARING
-                                    ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-emerald-100"
-                                    : it.status === OrderItemStatus.READY
-                                    ? "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100 animate-bounce"
-                                    : "bg-zinc-50 border-zinc-200 text-zinc-400 cursor-not-allowed"
-                                }`}
-                              >
-                                {isUpdating && "Actualizando..."}
-                                {!isUpdating && it.status === OrderItemStatus.PENDING && "Pendiente"}
-                                {!isUpdating && it.status === OrderItemStatus.PREPARING && "Preparando"}
-                                {!isUpdating && it.status === OrderItemStatus.READY && "Entregar"}
-                                {!isUpdating && it.status === OrderItemStatus.DELIVERED && "Servido ✔"}
-                              </button>
+                              <div className="flex shrink-0 items-center gap-1">
+                                {it.status === OrderItemStatus.PENDING && (
+                                  <>
+                                    {it.quantity > 1 && (
+                                      <button
+                                        type="button"
+                                        title="Quitar una unidad pendiente"
+                                        aria-label={`Quitar una unidad de ${prod.name}`}
+                                        onClick={() => handleDeletePendingItem(it.id, false)}
+                                        disabled={isUpdating}
+                                        className="flex h-7 w-7 items-center justify-center rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-40"
+                                      >
+                                        <Minus className="h-3.5 w-3.5" />
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      title="Eliminar toda la línea pendiente"
+                                      aria-label={`Eliminar toda la línea de ${prod.name}`}
+                                      onClick={() => handleDeletePendingItem(it.id, true)}
+                                      disabled={isUpdating}
+                                      className="flex h-7 w-7 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  onClick={() => handleUpdateItemStatus(it.id, it.status)}
+                                  disabled={isUpdating || it.status === OrderItemStatus.DELIVERED}
+                                  className={`px-2 py-1 rounded-md font-bold text-[10px] border transition-all cursor-pointer ${
+                                    isUpdating
+                                      ? "bg-zinc-100 border-zinc-200 text-zinc-400 cursor-wait"
+                                      :
+                                    it.status === OrderItemStatus.PENDING
+                                      ? "bg-zinc-100 border-zinc-200 text-zinc-700 hover:bg-amber-100"
+                                      : it.status === OrderItemStatus.PREPARING
+                                      ? "bg-blue-50 border-blue-200 text-blue-700 hover:bg-emerald-100"
+                                      : it.status === OrderItemStatus.READY
+                                      ? "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100 animate-bounce"
+                                      : "bg-zinc-50 border-zinc-200 text-zinc-400 cursor-not-allowed"
+                                  }`}
+                                >
+                                  {isUpdating && "Actualizando..."}
+                                  {!isUpdating && it.status === OrderItemStatus.PENDING && "Pendiente"}
+                                  {!isUpdating && it.status === OrderItemStatus.PREPARING && "Preparando"}
+                                  {!isUpdating && it.status === OrderItemStatus.READY && "Entregar"}
+                                  {!isUpdating && it.status === OrderItemStatus.DELIVERED && "Servido ✔"}
+                                </button>
+                              </div>
                             </div>
                           );
                         })}
@@ -1231,7 +1386,15 @@ export default function MozoView({
                               <button
                                 onClick={() => setWaiterCart(prev => [
                                   ...prev,
-                                  { product: p, quantity: 1, notes: "", modifiers: [] }
+                                  {
+                                    product: p,
+                                    quantity: 1,
+                                    notes: "",
+                                    modifiers: [],
+                                    adjustmentType: "extra",
+                                    adjustmentAmount: 0,
+                                    adjustmentLabel: "",
+                                  }
                                 ])}
                                 className="bg-zinc-900 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-lg text-xs cursor-pointer"
                               >
@@ -1251,8 +1414,9 @@ export default function MozoView({
                     <span className="font-bold text-xs text-zinc-900 block mb-3 border-b border-zinc-200 pb-1.5">Mesa {selectedTable?.number} Comanda</span>
                     <div className="space-y-2 overflow-y-auto max-h-[250px]">
                       {waiterCart.map((item, index) => (
-                        <div key={index} className="flex justify-between items-start text-xs border-b border-zinc-200/50 pb-2">
-                          <div>
+                        <div key={item.product.id} className="border-b border-zinc-200/50 pb-3 text-xs">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
                             <span className="font-bold text-zinc-800">{item.quantity}x {item.product.name}</span>
                             <input
                               type="text"
@@ -1265,8 +1429,74 @@ export default function MozoView({
                               })}
                               className="w-full bg-white border border-zinc-200 text-[10px] text-zinc-800 p-1 rounded mt-1 focus:outline-none"
                             />
+                            </div>
+                            <span className="shrink-0 text-right font-extrabold text-zinc-900">
+                              {formatCLP(getWaiterCartUnitPrice(item) * item.quantity)}
+                            </span>
                           </div>
-                          <span className="font-extrabold text-zinc-900 text-right">{formatCLP(item.product.price * item.quantity)}</span>
+
+                          <div className="mt-2 rounded-lg border border-zinc-200 bg-white p-2">
+                            <div className="grid grid-cols-2 gap-1 rounded-md bg-zinc-100 p-1">
+                              <button
+                                type="button"
+                                onClick={() => setWaiterCart((previous) => previous.map((candidate, candidateIndex) =>
+                                  candidateIndex === index ? { ...candidate, adjustmentType: "extra" } : candidate
+                                ))}
+                                className={`flex items-center justify-center gap-1 rounded px-1.5 py-1 text-[10px] font-bold ${
+                                  item.adjustmentType === "extra" ? "bg-emerald-600 text-white" : "text-zinc-600"
+                                }`}
+                              >
+                                <Plus className="h-3 w-3" /> Extra
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setWaiterCart((previous) => previous.map((candidate, candidateIndex) =>
+                                  candidateIndex === index ? {
+                                    ...candidate,
+                                    adjustmentType: "discount",
+                                    adjustmentAmount: Math.min(candidate.adjustmentAmount, candidate.product.price),
+                                  } : candidate
+                                ))}
+                                className={`flex items-center justify-center gap-1 rounded px-1.5 py-1 text-[10px] font-bold ${
+                                  item.adjustmentType === "discount" ? "bg-red-600 text-white" : "text-zinc-600"
+                                }`}
+                              >
+                                <Percent className="h-3 w-3" /> Descuento
+                              </button>
+                            </div>
+                            <div className="mt-2 grid grid-cols-[1fr_88px] gap-2">
+                              <input
+                                type="text"
+                                placeholder="Motivo: extra queso"
+                                value={item.adjustmentLabel}
+                                onChange={(event) => setWaiterCart((previous) => previous.map((candidate, candidateIndex) =>
+                                  candidateIndex === index ? { ...candidate, adjustmentLabel: event.target.value } : candidate
+                                ))}
+                                className="min-w-0 rounded-md border border-zinc-200 px-2 py-1.5 text-[10px] text-zinc-800 outline-none focus:border-amber-400"
+                              />
+                              <input
+                                type="number"
+                                min="0"
+                                max={item.adjustmentType === "discount" ? item.product.price : undefined}
+                                step="100"
+                                inputMode="numeric"
+                                aria-label="Monto del ajuste por unidad"
+                                value={item.adjustmentAmount || ""}
+                                onChange={(event) => {
+                                  const entered = Math.max(0, Number(event.target.value) || 0);
+                                  const amount = item.adjustmentType === "discount"
+                                    ? Math.min(entered, item.product.price)
+                                    : entered;
+                                  setWaiterCart((previous) => previous.map((candidate, candidateIndex) =>
+                                    candidateIndex === index ? { ...candidate, adjustmentAmount: amount } : candidate
+                                  ));
+                                }}
+                                placeholder="$0"
+                                className="rounded-md border border-zinc-200 px-2 py-1.5 text-right text-[10px] font-bold text-zinc-800 outline-none focus:border-amber-400"
+                              />
+                            </div>
+                            <span className="mt-1 block text-[9px] text-zinc-400">Monto aplicado por cada unidad.</span>
+                          </div>
                         </div>
                       ))}
                       {waiterCart.length === 0 && (
@@ -1279,7 +1509,7 @@ export default function MozoView({
                     <div className="flex justify-between items-center text-xs">
                       <span className="font-bold text-zinc-500">Total Comanda:</span>
                       <span className="font-extrabold text-zinc-900 text-sm">
-                        {formatCLP(waiterCart.reduce((sum, it) => sum + (it.product.price * it.quantity), 0))}
+                        {formatCLP(waiterCart.reduce((sum, it) => sum + (getWaiterCartUnitPrice(it) * it.quantity), 0))}
                       </span>
                     </div>
                     <button

@@ -316,6 +316,64 @@ async function startServer() {
     res.json({ success: true, order: createdOrder });
   });
 
+  app.post("/api/orders/:id/customer-count", (req, res) => {
+    const { id } = req.params;
+    const customerCount = Number(req.body.customerCount);
+    if (!Number.isInteger(customerCount) || customerCount < 1 || customerCount > 30) {
+      return res.status(400).json({ error: "La cantidad de comensales debe estar entre 1 y 30." });
+    }
+
+    let errorMsg = "";
+    LocalDb.updateState(state => {
+      const order = state.orders.find(candidate => candidate.id === id && candidate.status !== OrderStatus.CLOSED);
+      if (!order) {
+        errorMsg = "Comanda activa no encontrada.";
+        return;
+      }
+      const previousCount = order.customerCount;
+      order.customerCount = customerCount;
+      order.updatedAt = new Date().toISOString();
+      const user = state.users.find(candidate => candidate.id === req.body.userId);
+      const table = state.tables.find(candidate => candidate.id === order.tableId);
+      state.auditLogs.push({
+        id: "audit_" + Math.random().toString(36).substr(2, 9),
+        userId: user?.id,
+        userName: user?.name || "Mozo",
+        action: "Comensales Actualizados",
+        details: `Mesa ${table?.number || "?"}: ${previousCount} a ${customerCount} comensales.`,
+        createdAt: new Date().toISOString(),
+      });
+    });
+    if (errorMsg) return res.status(404).json({ error: errorMsg });
+    res.json({ success: true, order: LocalDb.getState().orders.find(candidate => candidate.id === id) });
+  });
+
+  app.delete("/api/orders/:id/items/:itemId", (req, res) => {
+    const { id, itemId } = req.params;
+    let errorMsg = "";
+    LocalDb.updateState(state => {
+      const order = state.orders.find(candidate => candidate.id === id && candidate.status !== OrderStatus.CLOSED);
+      if (!order) {
+        errorMsg = "Comanda activa no encontrada.";
+        return;
+      }
+      const item = order.items.find(candidate => candidate.id === itemId);
+      if (!item) {
+        errorMsg = "Ítem no encontrado.";
+        return;
+      }
+      if (item.status !== OrderItemStatus.PENDING) {
+        errorMsg = "Solo se pueden eliminar ítems que todavía están pendientes.";
+        return;
+      }
+      if (req.body.removeAll !== true && item.quantity > 1) item.quantity -= 1;
+      else order.items = order.items.filter(candidate => candidate.id !== itemId);
+      order.updatedAt = new Date().toISOString();
+    });
+    if (errorMsg) return res.status(400).json({ error: errorMsg });
+    res.json({ success: true, order: LocalDb.getState().orders.find(candidate => candidate.id === id) });
+  });
+
   // 5. Send order items to kitchen (moves them to preparing and deducts ingredients)
   app.post("/api/orders/:id/send-to-kitchen", (req, res) => {
     const { id } = req.params;

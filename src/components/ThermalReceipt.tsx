@@ -32,7 +32,13 @@ export function printThermalReceipt({ order, state, payments, waiterName }: Ther
       const unitPrice = product.price + modPrice;
       const lineTotal = unitPrice * item.quantity;
       const modifiersText = item.selectedModifiers && item.selectedModifiers.length > 0
-        ? item.selectedModifiers.map((m) => `  + ${m.name}`).join("<br/>")
+        ? item.selectedModifiers.map((m) => {
+            const prefix = m.extraPrice > 0 ? "+" : m.extraPrice < 0 ? "-" : "";
+            const price = m.extraPrice !== 0
+              ? ` (${m.extraPrice > 0 ? "+" : "-"}$${Math.abs(m.extraPrice).toLocaleString("es-CL")})`
+              : "";
+            return `  ${prefix} ${m.name}${price}`;
+          }).join("<br/>")
         : "";
       return `
         <tr>
