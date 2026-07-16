@@ -4,8 +4,19 @@ import App from './App.tsx';
 import './index.css';
 
 async function bootstrap() {
-  if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === 'true') {
-    const { handleLocalApiRequest } = await import('./dbClient.ts');
+  const root = createRoot(document.getElementById('root')!);
+  const directClientPromise = import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === 'true'
+    ? import('./dbClient.ts')
+    : null;
+
+  root.render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+
+  if (directClientPromise) {
+    const { handleLocalApiRequest } = await directClientPromise;
     const originalFetch = window.fetch;
     window.fetch = async (input, init) => {
       const url = typeof input === 'string'
@@ -17,12 +28,6 @@ async function bootstrap() {
       return originalFetch(input, init);
     };
   }
-
-  createRoot(document.getElementById('root')!).render(
-    <StrictMode>
-      <App />
-    </StrictMode>,
-  );
 }
 
 void bootstrap();

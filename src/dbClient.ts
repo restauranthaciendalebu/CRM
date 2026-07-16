@@ -24,6 +24,8 @@ const STATE_DOC_REF = doc(db, "settings", "restaurant_state");
 
 // Cache local of the database state
 let currentCachedState: RestaurantState | null = null;
+let currentClientState: RestaurantState | null = null;
+let currentClientStateJson = "";
 let stateListeners: ((state: RestaurantState) => void)[] = [];
 let authFailureCount = 0;
 let authLockedUntil = 0;
@@ -34,8 +36,8 @@ const AUTH_LOCK_MS = 5 * 60 * 1000;
 // Helper function to dynamically subscribe to Firestore changes in real-time
 export function subscribeToState(callback: (state: RestaurantState) => void) {
   stateListeners.push(callback);
-  if (currentCachedState) {
-    callback(sanitizeForClient(currentCachedState));
+  if (currentClientState) {
+    callback(currentClientState);
   }
   return () => {
     stateListeners = stateListeners.filter(l => l !== callback);
@@ -44,7 +46,15 @@ export function subscribeToState(callback: (state: RestaurantState) => void) {
 
 function publishState(state: RestaurantState) {
   currentCachedState = state;
-  stateListeners.forEach(listener => listener(sanitizeForClient(state)));
+  const clientStateJson = JSON.stringify(
+    state,
+    (key, value) => (key === "pin" || key === "password") ? "" : value
+  );
+  if (clientStateJson === currentClientStateJson) return;
+
+  currentClientStateJson = clientStateJson;
+  currentClientState = JSON.parse(clientStateJson) as RestaurantState;
+  stateListeners.forEach(listener => listener(currentClientState!));
 }
 
 // Applies a small UI-only change while the server transaction is in flight.

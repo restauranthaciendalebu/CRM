@@ -15,6 +15,7 @@ import {
   Check,
   AlertTriangle,
 } from "lucide-react";
+import { getOptimizedImageUrl } from "../imageUtils";
 
 interface CustomerQRViewProps {
   state: RestaurantState;
@@ -276,9 +277,13 @@ ${menuHTML}
         {/* Background image */}
         <div className="absolute inset-0 z-0">
           <img
-            src="https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=800&q=70"
+            src={getOptimizedImageUrl("https://images.unsplash.com/photo-1555939594-58d7cb561ad1", 1200, 76)}
             alt=""
             className="w-full h-full object-cover"
+            decoding="async"
+            fetchPriority="high"
+            width={1200}
+            height={480}
           />
           {/* Dark overlay gradient */}
           <div className="absolute inset-0 bg-gradient-to-b from-zinc-950/80 via-zinc-950/85 to-zinc-950" />
@@ -406,10 +411,13 @@ ${menuHTML}
                       {product.imageUrl && (
                         <div className="flex-shrink-0 w-20 h-20 rounded-xl overflow-hidden bg-zinc-800">
                           <img
-                            src={product.imageUrl}
+                            src={getOptimizedImageUrl(product.imageUrl, 240)}
                             alt={product.name}
                             className="w-full h-full object-cover"
                             loading="lazy"
+                            decoding="async"
+                            width={80}
+                            height={80}
                           />
                         </div>
                       )}

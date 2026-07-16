@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { MENU_CATEGORY_TRANSLATIONS, MENU_PRODUCT_TRANSLATIONS } from "../menuTranslations";
+import { getOptimizedImageUrl } from "../imageUtils";
 
 interface ClienteViewProps {
   state: RestaurantState;
@@ -301,6 +302,7 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
 
   // Poll for state updates every 3 seconds to represent real-time changes
   useEffect(() => {
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") return;
     const interval = setInterval(() => {
       onRefreshState();
     }, 3000);
@@ -810,10 +812,14 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                     {p.imageUrl && (
                       <div className="h-44 w-full overflow-hidden relative bg-stone-100 flex-shrink-0">
                         <img 
-                          src={p.imageUrl} 
+                          src={getOptimizedImageUrl(p.imageUrl, 640)}
                           alt={p.name} 
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
                           referrerPolicy="no-referrer"
+                          loading="lazy"
+                          decoding="async"
+                          width={640}
+                          height={352}
                         />
                         <div className="absolute top-3 left-3 bg-stone-950/90 backdrop-blur-md text-amber-400 font-bold tracking-widest text-[9px] uppercase px-2.5 py-1 rounded-full flex items-center gap-1 shadow-sm border border-amber-500/20">
                           <Sparkles className="w-3 h-3 text-amber-400 fill-amber-400" /> {t.recommended}
@@ -965,10 +971,14 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                 {p.imageUrl && (
                   <div className="w-28 h-28 rounded-2xl overflow-hidden bg-stone-100 flex-shrink-0 relative shadow-inner">
                     <img 
-                      src={p.imageUrl} 
+                      src={getOptimizedImageUrl(p.imageUrl, 256)}
                       alt={p.name} 
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
-                      referrerPolicy="no-referrer" 
+                      referrerPolicy="no-referrer"
+                      loading="lazy"
+                      decoding="async"
+                      width={112}
+                      height={112}
                     />
                     {!p.isAvailable && (
                       <div className="absolute inset-0 bg-stone-900/85 flex items-center justify-center text-center">
@@ -1118,7 +1128,14 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                 {/* Header */}
                 <div className="relative h-44 w-full bg-zinc-100 flex-shrink-0">
                   {p.imageUrl ? (
-                    <img src={p.imageUrl} alt={p.name} className="w-full h-full object-cover" />
+                    <img
+                      src={getOptimizedImageUrl(p.imageUrl, 800, 80)}
+                      alt={p.name}
+                      className="w-full h-full object-cover"
+                      decoding="async"
+                      width={800}
+                      height={352}
+                    />
                   ) : (
                     <div className="w-full h-full bg-zinc-900 flex items-center justify-center">
                       <UtensilsCrossed className="w-12 h-12 text-zinc-700" />
