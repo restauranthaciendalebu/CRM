@@ -90,6 +90,7 @@ export default function MozoView({
     notes: string;
     modifiers: SelectedItemModifier[];
     adjustmentType: "extra" | "discount";
+    adjustmentValueType: "amount" | "percent";
     adjustmentAmount: number;
     adjustmentLabel: string;
   }>>([]);
@@ -271,8 +272,21 @@ export default function MozoView({
     }
   };
 
+  const getWaiterCartAdjustmentValue = (item: (typeof waiterCart)[number]) => {
+    const value = Math.max(0, Number(item.adjustmentAmount) || 0);
+    if (item.adjustmentValueType === "percent") {
+      return Math.min(value, item.adjustmentType === "discount" ? 100 : 500);
+    }
+    return item.adjustmentType === "discount" ? Math.min(value, item.product.price) : value;
+  };
+
   const getWaiterCartAdjustment = (item: (typeof waiterCart)[number]) => {
-    const amount = Math.round(Math.max(0, Number(item.adjustmentAmount) || 0));
+    const value = getWaiterCartAdjustmentValue(item);
+    const amount = Math.round(
+      item.adjustmentValueType === "percent"
+        ? item.product.price * (value / 100)
+        : value
+    );
     return item.adjustmentType === "discount" ? -amount : amount;
   };
 
@@ -296,10 +310,13 @@ export default function MozoView({
           isWaiter: true,
           items: waiterCart.map((it, index) => {
             const adjustment = getWaiterCartAdjustment(it);
+            const adjustmentValue = getWaiterCartAdjustmentValue(it);
+            const adjustmentTypeLabel = adjustment > 0 ? "Extra" : "Descuento";
+            const adjustmentValueLabel = it.adjustmentValueType === "percent" ? ` ${adjustmentValue}%` : "";
             const customModifier: SelectedItemModifier[] = adjustment !== 0 ? [{
               modifierId: "waiter_price_adjustment",
               optionId: `waiter_adjustment_${Date.now()}_${index}`,
-              name: `${adjustment > 0 ? "Extra" : "Descuento"}: ${it.adjustmentLabel.trim() || "Ajuste manual"}`,
+              name: `${adjustmentTypeLabel}${adjustmentValueLabel}: ${it.adjustmentLabel.trim() || "Ajuste manual"}`,
               extraPrice: adjustment,
             }] : [];
             return {
@@ -1392,6 +1409,7 @@ export default function MozoView({
                                     notes: "",
                                     modifiers: [],
                                     adjustmentType: "extra",
+                                    adjustmentValueType: "amount",
                                     adjustmentAmount: 0,
                                     adjustmentLabel: "",
                                   }
@@ -1454,7 +1472,10 @@ export default function MozoView({
                                   candidateIndex === index ? {
                                     ...candidate,
                                     adjustmentType: "discount",
-                                    adjustmentAmount: Math.min(candidate.adjustmentAmount, candidate.product.price),
+                                    adjustmentAmount: Math.min(
+                                      candidate.adjustmentAmount,
+                                      candidate.adjustmentValueType === "percent" ? 100 : candidate.product.price
+                                    ),
                                   } : candidate
                                 ))}
                                 className={`flex items-center justify-center gap-1 rounded px-1.5 py-1 text-[10px] font-bold ${
@@ -1462,6 +1483,43 @@ export default function MozoView({
                                 }`}
                               >
                                 <Percent className="h-3 w-3" /> Descuento
+                              </button>
+                            </div>
+                            <div className="mt-2 grid grid-cols-2 gap-1 rounded-md bg-zinc-100 p-1">
+                              <button
+                                type="button"
+                                onClick={() => setWaiterCart((previous) => previous.map((candidate, candidateIndex) =>
+                                  candidateIndex === index ? {
+                                    ...candidate,
+                                    adjustmentValueType: "amount",
+                                    adjustmentAmount: candidate.adjustmentType === "discount"
+                                      ? Math.min(candidate.adjustmentAmount, candidate.product.price)
+                                      : candidate.adjustmentAmount,
+                                  } : candidate
+                                ))}
+                                className={`flex items-center justify-center gap-1 rounded px-1.5 py-1 text-[10px] font-bold ${
+                                  item.adjustmentValueType === "amount" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"
+                                }`}
+                              >
+                                <DollarSign className="h-3 w-3" /> Monto
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setWaiterCart((previous) => previous.map((candidate, candidateIndex) =>
+                                  candidateIndex === index ? {
+                                    ...candidate,
+                                    adjustmentValueType: "percent",
+                                    adjustmentAmount: Math.min(
+                                      candidate.adjustmentAmount,
+                                      candidate.adjustmentType === "discount" ? 100 : 500
+                                    ),
+                                  } : candidate
+                                ))}
+                                className={`flex items-center justify-center gap-1 rounded px-1.5 py-1 text-[10px] font-bold ${
+                                  item.adjustmentValueType === "percent" ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500"
+                                }`}
+                              >
+                                <Percent className="h-3 w-3" /> Porcentaje
                               </button>
                             </div>
                             <div className="mt-2 grid grid-cols-[1fr_88px] gap-2">
@@ -1477,25 +1535,34 @@ export default function MozoView({
                               <input
                                 type="number"
                                 min="0"
-                                max={item.adjustmentType === "discount" ? item.product.price : undefined}
-                                step="100"
-                                inputMode="numeric"
-                                aria-label="Monto del ajuste por unidad"
+                                max={item.adjustmentValueType === "percent"
+                                  ? (item.adjustmentType === "discount" ? 100 : 500)
+                                  : (item.adjustmentType === "discount" ? item.product.price : undefined)}
+                                step={item.adjustmentValueType === "percent" ? "1" : "100"}
+                                inputMode="decimal"
+                                aria-label={item.adjustmentValueType === "percent"
+                                  ? "Porcentaje del ajuste por unidad"
+                                  : "Monto del ajuste por unidad"}
                                 value={item.adjustmentAmount || ""}
                                 onChange={(event) => {
                                   const entered = Math.max(0, Number(event.target.value) || 0);
-                                  const amount = item.adjustmentType === "discount"
-                                    ? Math.min(entered, item.product.price)
-                                    : entered;
+                                  const maximum = item.adjustmentValueType === "percent"
+                                    ? (item.adjustmentType === "discount" ? 100 : 500)
+                                    : (item.adjustmentType === "discount" ? item.product.price : Number.POSITIVE_INFINITY);
+                                  const amount = Math.min(entered, maximum);
                                   setWaiterCart((previous) => previous.map((candidate, candidateIndex) =>
                                     candidateIndex === index ? { ...candidate, adjustmentAmount: amount } : candidate
                                   ));
                                 }}
-                                placeholder="$0"
+                                placeholder={item.adjustmentValueType === "percent" ? "0%" : "$0"}
                                 className="rounded-md border border-zinc-200 px-2 py-1.5 text-right text-[10px] font-bold text-zinc-800 outline-none focus:border-amber-400"
                               />
                             </div>
-                            <span className="mt-1 block text-[9px] text-zinc-400">Monto aplicado por cada unidad.</span>
+                            <span className="mt-1 block text-[9px] text-zinc-400">
+                              {item.adjustmentValueType === "percent"
+                                ? "Porcentaje calculado sobre el precio unitario."
+                                : "Monto aplicado por cada unidad."}
+                            </span>
                           </div>
                         </div>
                       ))}
