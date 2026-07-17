@@ -48,6 +48,11 @@ interface MozoViewProps {
   onLogout: () => void;
 }
 
+const isCookingItemStatus = (status: OrderItemStatus) =>
+  status === OrderItemStatus.SENT_TO_KITCHEN ||
+  status === OrderItemStatus.RECEIVED ||
+  status === OrderItemStatus.PREPARING;
+
 export default function MozoView({ 
   state, 
   onRefreshState, 
@@ -452,8 +457,10 @@ export default function MozoView({
   // Change individual order item status
   const handleUpdateItemStatus = async (itemId: string, currentStatus: OrderItemStatus) => {
     if (!activeOrder || pendingOrderActionIds.includes(itemId)) return;
-    if (currentStatus !== OrderItemStatus.READY) return;
-    const nextStatus = OrderItemStatus.DELIVERED;
+    if (!isCookingItemStatus(currentStatus) && currentStatus !== OrderItemStatus.READY) return;
+    const nextStatus = isCookingItemStatus(currentStatus)
+      ? OrderItemStatus.READY
+      : OrderItemStatus.DELIVERED;
 
     setPendingOrderActionIds(prev => [...prev, itemId]);
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
@@ -1232,19 +1239,16 @@ export default function MozoView({
                                 )}
                                 <button
                                   onClick={() => handleUpdateItemStatus(it.id, it.status)}
-                                  disabled={isUpdating || it.status !== OrderItemStatus.READY}
+                                  disabled={isUpdating || (!isCookingItemStatus(it.status) && it.status !== OrderItemStatus.READY)}
+                                  title={isCookingItemStatus(it.status) ? "Marcar plato listo para servir" : it.status === OrderItemStatus.READY ? "Marcar plato servido" : undefined}
                                   className={`px-2 py-1 rounded-md font-bold text-[10px] border transition-all ${
                                     isUpdating
                                       ? "bg-zinc-100 border-zinc-200 text-zinc-400 cursor-wait"
                                       :
                                     it.status === OrderItemStatus.PENDING
                                       ? "bg-zinc-100 border-zinc-200 text-zinc-700 cursor-not-allowed"
-                                      : it.status === OrderItemStatus.SENT_TO_KITCHEN
-                                      ? "bg-amber-50 border-amber-200 text-amber-700 cursor-not-allowed"
-                                      : it.status === OrderItemStatus.RECEIVED
-                                      ? "bg-cyan-50 border-cyan-200 text-cyan-700 cursor-not-allowed"
-                                      : it.status === OrderItemStatus.PREPARING
-                                      ? "bg-blue-50 border-blue-200 text-blue-700 cursor-not-allowed"
+                                      : isCookingItemStatus(it.status)
+                                      ? "bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100 cursor-pointer"
                                       : it.status === OrderItemStatus.READY
                                       ? "bg-emerald-50 border-emerald-200 text-emerald-800 hover:bg-emerald-100 animate-bounce cursor-pointer"
                                       : "bg-zinc-50 border-zinc-200 text-zinc-400 cursor-not-allowed"
@@ -1252,9 +1256,7 @@ export default function MozoView({
                                 >
                                   {isUpdating && "Actualizando..."}
                                   {!isUpdating && it.status === OrderItemStatus.PENDING && "Pendiente"}
-                                  {!isUpdating && it.status === OrderItemStatus.SENT_TO_KITCHEN && "Cocinando"}
-                                  {!isUpdating && it.status === OrderItemStatus.RECEIVED && "Cocinando"}
-                                  {!isUpdating && it.status === OrderItemStatus.PREPARING && "Cocinando"}
+                                  {!isUpdating && isCookingItemStatus(it.status) && "Cocinando"}
                                   {!isUpdating && it.status === OrderItemStatus.READY && "Entregar"}
                                   {!isUpdating && it.status === OrderItemStatus.DELIVERED && "Servido ✔"}
                                 </button>
