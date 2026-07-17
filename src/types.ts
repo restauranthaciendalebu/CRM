@@ -142,6 +142,10 @@ export interface Order {
   createdAt: string;
   updatedAt: string;
   kitchenSentAt?: string;
+  billingSubtotal?: number;
+  billingDiscount?: number;
+  billingTip?: number;
+  billingTotal?: number;
   items: OrderItem[];
   customerPhone?: string; // linked customer if registered/found
 }

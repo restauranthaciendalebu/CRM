@@ -21,6 +21,7 @@ import {
 } from "./src/types.js";
 import { createTable, ensureMinimumTables } from "./src/tableUtils.js";
 import { isDirectServiceProduct } from "./src/orderUtils.js";
+import { getRemainingBalance } from "./src/billingUtils.js";
 
 dotenv.config({ path: ".env.local" });
 dotenv.config();
@@ -562,6 +563,9 @@ async function startServer() {
     }
 
     let errorMsg = "";
+    let createdPayments: any[] = [];
+    let remainingBalance = 0;
+    let orderClosed = false;
     LocalDb.updateState(state => {
       const order = state.orders.find(o => o.id === id);
       if (!order) {
@@ -572,6 +576,30 @@ async function startServer() {
         item.status !== OrderItemStatus.READY && item.status !== OrderItemStatus.DELIVERED
       )) {
         errorMsg = "No se puede cobrar hasta que todos los pedidos salgan de cocina";
+        return;
+      }
+
+      const requestedTotal = payments.reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
+      const proposedSubtotal = Math.max(0, Math.round(Number(totalAmount) || 0));
+      const proposedDiscount = Math.max(0, Math.round(Number(discount) || 0));
+      const proposedTip = Math.max(0, Math.round(Number(tip) || 0));
+      const proposedBillingTotal = proposedSubtotal - proposedDiscount + proposedTip;
+      const billingTotal = order.billingTotal ?? proposedBillingTotal;
+      const alreadyPaid = state.payments
+        .filter(payment => payment.orderId === id)
+        .reduce((sum, payment) => sum + payment.amount, 0);
+      const balanceBeforePayment = getRemainingBalance(billingTotal, alreadyPaid);
+
+      if (billingTotal <= 0 || payments.length === 0 || !Number.isFinite(requestedTotal) || requestedTotal <= 0) {
+        errorMsg = "Ingresa un monto de pago válido";
+        return;
+      }
+      if (payments.some(pay => !Number.isFinite(Number(pay.amount)) || Number(pay.amount) <= 0)) {
+        errorMsg = "Todos los pagos deben tener un monto válido";
+        return;
+      }
+      if (requestedTotal > balanceBeforePayment) {
+        errorMsg = `El pago supera el saldo pendiente de $${balanceBeforePayment.toLocaleString("es-CL")}`;
         return;
       }
 
@@ -586,7 +614,14 @@ async function startServer() {
         order.customerPhone = accountCustomer.phone;
       }
 
-      // Create Payment records
+      if (order.billingTotal === undefined) {
+        order.billingSubtotal = proposedSubtotal;
+        order.billingDiscount = proposedDiscount;
+        order.billingTip = proposedTip;
+        order.billingTotal = proposedBillingTotal;
+      }
+
+      const paymentCreatedAt = new Date().toISOString();
       payments.forEach(pay => {
         const creditCustomer = pay.method === PaymentMethod.ACCOUNT ? accountCustomer : null;
         const payment = {
@@ -596,7 +631,7 @@ async function startServer() {
           method: pay.method as PaymentMethod,
           tip: pay.tip || 0,
           discount: pay.discount || 0,
-          createdAt: new Date().toISOString()
+          createdAt: paymentCreatedAt
         };
         if (creditCustomer) {
           Object.assign(payment, {
@@ -605,34 +640,34 @@ async function startServer() {
           });
         }
         state.payments.push(payment);
+        createdPayments.push(payment);
       });
 
-      order.status = OrderStatus.CLOSED;
-      order.updatedAt = new Date().toISOString();
+      remainingBalance = getRemainingBalance(billingTotal, alreadyPaid + requestedTotal);
+      orderClosed = remainingBalance === 0;
+      order.updatedAt = paymentCreatedAt;
 
-      // Free the table
       const table = state.tables.find(t => t.id === order.tableId);
-      if (table) {
-        table.status = TableStatus.FREE;
-      }
+      if (orderClosed) {
+        order.status = OrderStatus.CLOSED;
+        if (table) table.status = TableStatus.FREE;
 
-      // Loyalty points management (Chile CLP format: 1 point per $100 CLP spent)
-      const loyaltyPhone = accountCustomer?.phone || customerPhone;
-      if (loyaltyPhone) {
-        const customer = state.customers.find(c => c.phone === loyaltyPhone);
-        if (customer) {
-          // Calculate points earned (1 point per 100 CLP of ticket total)
-          const earnedPoints = Math.floor((totalAmount - (discount || 0)) / 100);
-          if (earnedPoints > 0) {
-            customer.points += earnedPoints;
-            state.loyaltyTxs.push({
-              id: "tx_" + Math.random().toString(36).substr(2, 9),
-              customerId: customer.id,
-              points: earnedPoints,
-              type: LoyaltyTxType.EARNED,
-              description: `Puntos ganados por consumo de Mesa ${table ? table.number : ""}`,
-              createdAt: new Date().toISOString()
-            });
+        const loyaltyPhone = accountCustomer?.phone || customerPhone || order.customerPhone;
+        if (loyaltyPhone) {
+          const customer = state.customers.find(c => c.phone === loyaltyPhone);
+          if (customer) {
+            const earnedPoints = Math.floor(((order.billingSubtotal || proposedSubtotal) - (order.billingDiscount || 0)) / 100);
+            if (earnedPoints > 0) {
+              customer.points += earnedPoints;
+              state.loyaltyTxs.push({
+                id: "tx_" + Math.random().toString(36).substr(2, 9),
+                customerId: customer.id,
+                points: earnedPoints,
+                type: LoyaltyTxType.EARNED,
+                description: `Puntos ganados por consumo de Mesa ${table ? table.number : ""}`,
+                createdAt: paymentCreatedAt
+              });
+            }
           }
         }
       }
@@ -641,7 +676,13 @@ async function startServer() {
     if (errorMsg) {
       return res.status(400).json({ error: errorMsg });
     }
-    res.json(sanitizeForClient({ success: true, state: LocalDb.getState() }));
+    res.json(sanitizeForClient({
+      success: true,
+      state: LocalDb.getState(),
+      payments: createdPayments,
+      remaining: remainingBalance,
+      closed: orderClosed,
+    }));
   });
 
   // 10. Customer loyalty actions

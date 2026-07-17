@@ -20,7 +20,7 @@ export default function WaiterReceiptHistory({ state, onClose }: WaiterReceiptHi
   const [search, setSearch] = useState("");
   const [period, setPeriod] = useState<"today" | "7days" | "30days" | "all">("today");
 
-  const closedOrders = useMemo(() => {
+  const receiptEntries = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase();
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -32,18 +32,24 @@ export default function WaiterReceiptHistory({ state, onClose }: WaiterReceiptHi
           ? startOfToday - 29 * 24 * 60 * 60 * 1000
           : 0;
 
-    return state.orders
-      .filter((order) => order.status === OrderStatus.CLOSED && !(order as typeof order & { voided?: boolean }).voided)
-      .filter((order) => new Date(order.updatedAt).getTime() >= periodStart)
-      .filter((order) => {
+    return state.payments
+      .map((payment) => ({
+        payment,
+        order: state.orders.find((order) => order.id === payment.orderId),
+      }))
+      .filter((entry) => entry.order && !(entry.order as typeof entry.order & { voided?: boolean }).voided)
+      .filter((entry) => new Date(entry.payment.createdAt).getTime() >= periodStart)
+      .filter((entry) => {
         if (!normalizedSearch) return true;
+        const order = entry.order!;
         const table = state.tables.find((candidate) => candidate.id === order.tableId);
         return order.id.toLocaleLowerCase().includes(normalizedSearch) ||
+          entry.payment.id.toLocaleLowerCase().includes(normalizedSearch) ||
           String(table?.number || "").includes(normalizedSearch) ||
           (order.customerPhone || "").toLocaleLowerCase().includes(normalizedSearch);
       })
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-  }, [period, search, state.orders, state.tables]);
+      .sort((a, b) => new Date(b.payment.createdAt).getTime() - new Date(a.payment.createdAt).getTime());
+  }, [period, search, state.orders, state.payments, state.tables]);
 
   const formatCLP = (value: number) => "$" + Math.round(value).toLocaleString("es-CL");
 
@@ -81,32 +87,54 @@ export default function WaiterReceiptHistory({ state, onClose }: WaiterReceiptHi
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
-          {closedOrders.length > 0 ? (
+          {receiptEntries.length > 0 ? (
             <div className="space-y-3">
-              {closedOrders.map((order) => {
+              {receiptEntries.map(({ order: maybeOrder, payment }) => {
+                const order = maybeOrder!;
                 const table = state.tables.find((candidate) => candidate.id === order.tableId);
-                const payments = state.payments.filter((payment) => payment.orderId === order.id);
+                const orderPayments = state.payments
+                  .filter((candidate) => candidate.orderId === order.id)
+                  .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+                const paymentIndex = orderPayments.findIndex((candidate) => candidate.id === payment.id);
+                const previouslyPaid = orderPayments
+                  .slice(0, Math.max(0, paymentIndex))
+                  .reduce((sum, candidate) => sum + candidate.amount, 0);
+                const accountTotal = order.billingTotal ?? orderPayments.reduce((sum, candidate) => sum + candidate.amount, 0);
+                const remainingBalance = Math.max(0, accountTotal - previouslyPaid - payment.amount);
                 const waiter = state.users.find((user) => user.id === order.waiterId);
-                const total = payments.reduce((sum, payment) => sum + payment.amount, 0);
-                const methods = Array.from(new Set(payments.map((payment) => paymentLabels[payment.method]))).join(" + ");
+                const isClosed = order.status === OrderStatus.CLOSED;
 
                 return (
-                  <article key={order.id} className="rounded-xl border border-zinc-200 bg-white p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <article key={payment.id} className="rounded-xl border border-zinc-200 bg-white p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-extrabold text-sm text-zinc-950">Mesa {table?.number || "?"}</span>
-                        <span className="rounded bg-emerald-50 px-2 py-0.5 text-[9px] font-black uppercase text-emerald-700">Pagada</span>
+                        <span className={`rounded px-2 py-0.5 text-[9px] font-black uppercase ${isClosed ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                          {isClosed ? "Cuenta pagada" : "Pago parcial"}
+                        </span>
                       </div>
                       <p className="mt-1 text-[11px] text-zinc-500">
-                        {new Date(payments[0]?.createdAt || order.updatedAt).toLocaleString("es-CL")} · Comanda {order.id.slice(-6).toUpperCase()}
+                        {new Date(payment.createdAt).toLocaleString("es-CL")} · Boleta {payment.id.slice(-6).toUpperCase()}
                       </p>
-                      <p className="mt-0.5 text-[10px] text-zinc-400">{methods || "Pago registrado"}{waiter ? ` · ${waiter.name}` : ""}</p>
+                      <p className="mt-0.5 text-[10px] text-zinc-400">{paymentLabels[payment.method]}{waiter ? ` · ${waiter.name}` : ""}</p>
+                      {remainingBalance > 0 && <p className="mt-1 text-[10px] font-bold text-amber-700">Saldo posterior: {formatCLP(remainingBalance)}</p>}
                     </div>
                     <div className="flex items-center justify-between sm:justify-end gap-3">
-                      <span className="text-base font-black text-zinc-950">{formatCLP(total)}</span>
+                      <span className="text-base font-black text-zinc-950">{formatCLP(payment.amount)}</span>
                       <button
                         type="button"
-                        onClick={() => printThermalReceipt({ order, state, payments, waiterName: waiter?.name })}
+                        onClick={() => printThermalReceipt({
+                          order,
+                          state,
+                          payments: [payment],
+                          waiterName: waiter?.name,
+                          accountSubtotal: order.billingSubtotal,
+                          accountDiscount: order.billingDiscount,
+                          accountTip: order.billingTip,
+                          accountTotal,
+                          previouslyPaid,
+                          remainingBalance,
+                        })}
                         className="h-10 w-10 rounded-lg bg-zinc-950 text-white hover:bg-amber-500 hover:text-zinc-950 flex items-center justify-center"
                         title="Imprimir copia"
                         aria-label={`Imprimir copia de boleta de Mesa ${table?.number || ""}`}

@@ -1484,16 +1484,19 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
                     .map((order) => {
                       const isVoided = (order as any).voided;
-                      const orderPayment = state.payments.find(p => p.orderId === order.id);
-                      const orderPayments = state.payments.filter(p => p.orderId === order.id);
+                      const orderPayments = state.payments
+                        .filter(p => p.orderId === order.id)
+                        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
                       
                       const subtotal = order.items.reduce((sum, it) => {
                         const p = state.products.find(prod => prod.id === it.productId);
                         return sum + (p ? p.price : 0) * it.quantity;
                       }, 0);
-                      const totalAmount = orderPayment ? orderPayment.amount : subtotal;
-                      const tipAmount = orderPayment ? orderPayment.tip : 0;
-                      const finalTotal = totalAmount + tipAmount;
+                      const totalAmount = orderPayments.length > 0
+                        ? orderPayments.reduce((sum, payment) => sum + payment.amount, 0)
+                        : subtotal;
+                      const tipAmount = orderPayments.reduce((sum, payment) => sum + (payment.tip || 0), 0);
+                      const finalTotal = totalAmount;
 
                       const table = state.tables.find(t => t.id === order.tableId);
 
@@ -1551,23 +1554,39 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                                 </h4>
                                 {!isVoided && (
                                   <span className="text-[9px] text-zinc-400 block">
-                                    Subtotal: {formatCLP(totalAmount)} | Propina: {formatCLP(tipAmount)}
+                                    {orderPayments.length} {orderPayments.length === 1 ? "boleta" : "boletas"} | Propina incluida: {formatCLP(tipAmount)}
                                   </span>
                                 )}
                               </div>
 
                               {!isVoided && (
                                 <div className="flex flex-wrap justify-end gap-2">
-                                  <button
-                                    onClick={() => printThermalReceipt({
-                                      order,
-                                      state,
-                                      payments: orderPayments,
-                                    })}
-                                    className="flex items-center gap-1 bg-zinc-900 hover:bg-zinc-700 text-white font-extrabold px-2.5 py-1.5 rounded-lg text-[10px] border border-zinc-800 transition-colors cursor-pointer"
-                                  >
-                                    <Printer className="w-3.5 h-3.5" /> Imprimir Boleta
-                                  </button>
+                                  {orderPayments.map((payment, paymentIndex) => {
+                                    const previouslyPaid = orderPayments
+                                      .slice(0, paymentIndex)
+                                      .reduce((sum, candidate) => sum + candidate.amount, 0);
+                                    const accountTotal = order.billingTotal ?? totalAmount;
+                                    const remainingBalance = Math.max(0, accountTotal - previouslyPaid - payment.amount);
+                                    return (
+                                      <button
+                                        key={payment.id}
+                                        onClick={() => printThermalReceipt({
+                                          order,
+                                          state,
+                                          payments: [payment],
+                                          accountSubtotal: order.billingSubtotal ?? subtotal,
+                                          accountDiscount: order.billingDiscount,
+                                          accountTip: order.billingTip,
+                                          accountTotal,
+                                          previouslyPaid,
+                                          remainingBalance,
+                                        })}
+                                        className="flex items-center gap-1 bg-zinc-900 hover:bg-zinc-700 text-white font-extrabold px-2.5 py-1.5 rounded-lg text-[10px] border border-zinc-800 transition-colors cursor-pointer"
+                                      >
+                                        <Printer className="w-3.5 h-3.5" /> Boleta {paymentIndex + 1}: {formatCLP(payment.amount)}
+                                      </button>
+                                    );
+                                  })}
                                   <button
                                     onClick={async () => {
                                       const reason = window.confirm("¿Seguro que deseas ANULAR este pedido? Se reembolsará el stock completo al inventario, se cancelarán las transacciones financieras y se descontarán los puntos del cliente.");

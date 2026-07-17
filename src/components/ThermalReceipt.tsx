@@ -4,15 +4,32 @@ import { Order, RestaurantState, PaymentMethod } from "../types";
 interface ThermalReceiptProps {
   order: Order;
   state: RestaurantState;
-  payments: Array<{ amount: number; method: PaymentMethod; tip: number; discount: number; createdAt?: string }>;
+  payments: Array<{ id?: string; amount: number; method: PaymentMethod; tip: number; discount: number; createdAt?: string }>;
   waiterName?: string;
+  accountSubtotal?: number;
+  accountDiscount?: number;
+  accountTip?: number;
+  accountTotal?: number;
+  previouslyPaid?: number;
+  remainingBalance?: number;
 }
 
 /**
  * Opens a print-optimized window formatted for 80mm thermal printers (302px).
  * Includes all legally required receipt fields for Chile (boleta).
  */
-export function printThermalReceipt({ order, state, payments, waiterName }: ThermalReceiptProps) {
+export function printThermalReceipt({
+  order,
+  state,
+  payments,
+  waiterName,
+  accountSubtotal,
+  accountDiscount,
+  accountTip,
+  accountTotal,
+  previouslyPaid = 0,
+  remainingBalance = 0,
+}: ThermalReceiptProps) {
   const table = state.tables.find((t) => t.id === order.tableId);
   const tableName = table ? `Mesa ${table.number} — ${table.zone}` : "Sin mesa";
 
@@ -20,7 +37,8 @@ export function printThermalReceipt({ order, state, payments, waiterName }: Ther
   const dateStr = receiptDate.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
   const timeStr = receiptDate.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
   const receiptDay = `${receiptDate.getFullYear()}${String(receiptDate.getMonth() + 1).padStart(2, "0")}${String(receiptDate.getDate()).padStart(2, "0")}`;
-  const receiptId = order.id.replace(/[^a-zA-Z0-9]/g, "").slice(-8).toUpperCase().padStart(8, "0");
+  const receiptSourceId = payments[0]?.id || order.id;
+  const receiptId = receiptSourceId.replace(/[^a-zA-Z0-9]/g, "").slice(-8).toUpperCase().padStart(8, "0");
   const receiptNumber = `B-${receiptDay}-${receiptId}`;
 
   // Build items rows
@@ -63,6 +81,11 @@ export function printThermalReceipt({ order, state, payments, waiterName }: Ther
   const totalDiscount = payments.reduce((sum, p) => sum + (p.discount || 0), 0);
   const totalTip = payments.reduce((sum, p) => sum + (p.tip || 0), 0);
   const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0);
+  const fullSubtotal = accountSubtotal ?? subtotal;
+  const fullDiscount = accountDiscount ?? totalDiscount;
+  const fullTip = accountTip ?? totalTip;
+  const fullAccountTotal = accountTotal ?? totalPaid;
+  const isPartialReceipt = previouslyPaid > 0 || remainingBalance > 0 || totalPaid < fullAccountTotal;
 
   const paymentMethodLabel = (method: PaymentMethod) => {
     const labels: Record<PaymentMethod, string> = {
@@ -209,15 +232,18 @@ export function printThermalReceipt({ order, state, payments, waiterName }: Ther
 
   <!-- Totals -->
   <table>
-    <tr><td>Subtotal</td><td class="item-price">$${subtotal.toLocaleString("es-CL")}</td></tr>
-    ${totalDiscount > 0 ? `<tr><td>Descuento</td><td class="item-price" style="color:#c00">-$${totalDiscount.toLocaleString("es-CL")}</td></tr>` : ""}
-    ${totalTip > 0 ? `<tr><td>Propina (sugerida)</td><td class="item-price">$${totalTip.toLocaleString("es-CL")}</td></tr>` : ""}
+    <tr><td>Consumo total</td><td class="item-price">$${fullSubtotal.toLocaleString("es-CL")}</td></tr>
+    ${fullDiscount > 0 ? `<tr><td>Descuento cuenta</td><td class="item-price" style="color:#c00">-$${fullDiscount.toLocaleString("es-CL")}</td></tr>` : ""}
+    ${fullTip > 0 ? `<tr><td>Propina cuenta</td><td class="item-price">$${fullTip.toLocaleString("es-CL")}</td></tr>` : ""}
+    ${isPartialReceipt ? `<tr><td>Total cuenta</td><td class="item-price">$${fullAccountTotal.toLocaleString("es-CL")}</td></tr>` : ""}
+    ${previouslyPaid > 0 ? `<tr><td>Pagado anteriormente</td><td class="item-price">$${previouslyPaid.toLocaleString("es-CL")}</td></tr>` : ""}
   </table>
 
   <hr class="double-sep" />
 
   <table>
-    <tr class="total-row"><td>TOTAL</td><td class="item-price">$${totalPaid.toLocaleString("es-CL")}</td></tr>
+    <tr class="total-row"><td>${isPartialReceipt ? "PAGO ESTA BOLETA" : "TOTAL"}</td><td class="item-price">$${totalPaid.toLocaleString("es-CL")}</td></tr>
+    ${isPartialReceipt ? `<tr><td>Saldo pendiente</td><td class="item-price">$${remainingBalance.toLocaleString("es-CL")}</td></tr>` : ""}
   </table>
 
   <hr class="sep" />

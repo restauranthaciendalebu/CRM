@@ -8,6 +8,7 @@ import {
   OrderItemStatus, 
   Product, 
   PaymentMethod,
+  Payment,
   OrderItem,
   SelectedItemModifier
 } from "../types";
@@ -39,6 +40,7 @@ import { printThermalReceipt } from "./ThermalReceipt";
 import { isDirectServiceProduct } from "../orderUtils";
 import AddTableModal from "./AddTableModal";
 import WaiterReceiptHistory from "./WaiterReceiptHistory";
+import { allocateRemainingAdjustment, getNextPaymentAmount, getRemainingBalance } from "../billingUtils";
 
 interface MozoViewProps {
   state: RestaurantState;
@@ -118,6 +120,10 @@ export default function MozoView({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
   const [billingCreditCustomerId, setBillingCreditCustomerId] = useState("");
   const [billingSuccess, setBillingSuccess] = useState(false);
+  const [lastBillingPayments, setLastBillingPayments] = useState<Payment[]>([]);
+  const [lastBillingOrderId, setLastBillingOrderId] = useState("");
+  const [billingRemainingAfterPayment, setBillingRemainingAfterPayment] = useState(0);
+  const [billingClosedAfterPayment, setBillingClosedAfterPayment] = useState(false);
 
   // Shift Management State
   const [isShiftControlOpen, setIsShiftControlOpen] = useState(false);
@@ -207,6 +213,13 @@ export default function MozoView({
   const activeOrder = selectedTable
     ? state.orders.find(o => o.tableId === selectedTable.id && o.status !== OrderStatus.CLOSED)
     : null;
+  const billingOrder = activeOrder || (lastBillingOrderId
+    ? state.orders.find((order) => order.id === lastBillingOrderId)
+    : null);
+  const activeOrderPayments = billingOrder
+    ? state.payments.filter((payment) => payment.orderId === billingOrder.id)
+    : [];
+  const activeOrderPaid = activeOrderPayments.reduce((sum, payment) => sum + payment.amount, 0);
   const hasPendingKitchenItems = activeOrder?.items.some((it) => it.status === OrderItemStatus.PENDING) ?? false;
   const canBillActiveOrder = Boolean(
     activeOrder?.items.length && activeOrder.items.every((item) =>
@@ -549,6 +562,22 @@ export default function MozoView({
     }, 0);
   };
 
+  const billingSubtotal = billingOrder?.billingSubtotal ?? calculateActiveOrderTotal();
+  const billingDiscountAmount = billingOrder?.billingDiscount ?? Math.round(billingSubtotal * (appliedDiscount / 100));
+  const billingTipAmount = billingOrder?.billingTip ?? Math.round(billingSubtotal * (tipPercent / 100));
+  const billingAccountTotal = billingOrder?.billingTotal ?? billingSubtotal - billingDiscountAmount + billingTipAmount;
+  const billingRemaining = getRemainingBalance(billingAccountTotal, activeOrderPaid);
+  const billingTermsLocked = activeOrderPayments.length > 0;
+  const nextBillingPaymentAmount = getNextPaymentAmount(
+    billingRemaining,
+    billingSplitType,
+    billingSplitParts,
+    billingCustomAmount,
+  );
+  const isBillingAmountInvalid = !Number.isFinite(nextBillingPaymentAmount) ||
+    nextBillingPaymentAmount <= 0 ||
+    nextBillingPaymentAmount > billingRemaining;
+
   const handleCloseBillSubmit = async () => {
     if (!activeOrder) return;
     if (!canBillActiveOrder) {
@@ -560,10 +589,42 @@ export default function MozoView({
       showBanner("Selecciona una cuenta autorizada para cargar el consumo.", "error");
       return;
     }
-    const orderTotal = calculateActiveOrderTotal();
-    const discountAmount = Math.round(orderTotal * (appliedDiscount / 100));
-    const tipAmount = Math.round(orderTotal * (tipPercent / 100));
-    const totalToPay = orderTotal - discountAmount + tipAmount;
+    if (billingRemaining <= 0) {
+      showBanner("La cuenta ya está completamente pagada.", "error");
+      return;
+    }
+
+    const paymentAmount = getNextPaymentAmount(
+      billingRemaining,
+      billingSplitType,
+      billingSplitParts,
+      billingCustomAmount,
+    );
+    if (billingSplitType === "custom") {
+      if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+        showBanner("Ingresa un monto libre válido.", "error");
+        return;
+      }
+      if (paymentAmount > billingRemaining) {
+        showBanner(`El monto supera el saldo pendiente de ${formatCLP(billingRemaining)}.`, "error");
+        return;
+      }
+    }
+
+    const previouslyRecordedTip = activeOrderPayments.reduce((sum, payment) => sum + (payment.tip || 0), 0);
+    const previouslyRecordedDiscount = activeOrderPayments.reduce((sum, payment) => sum + (payment.discount || 0), 0);
+    const allocatedTip = allocateRemainingAdjustment(
+      billingTipAmount,
+      previouslyRecordedTip,
+      paymentAmount,
+      billingRemaining,
+    );
+    const allocatedDiscount = allocateRemainingAdjustment(
+      billingDiscountAmount,
+      previouslyRecordedDiscount,
+      paymentAmount,
+      billingRemaining,
+    );
     const createPaymentPayload = (amount: number, method: PaymentMethod, tip: number, discount: number) => ({
       amount,
       method,
@@ -574,28 +635,8 @@ export default function MozoView({
         : {}),
     });
 
-    // Build split payments payload
-    let paymentsPayload = [];
-    if (billingSplitType === "equal") {
-      const amountPerPart = Math.round(totalToPay / billingSplitParts);
-      for (let i = 0; i < billingSplitParts; i++) {
-        paymentsPayload.push(createPaymentPayload(
-          amountPerPart,
-          paymentMethod,
-          Math.round(tipAmount / billingSplitParts),
-          Math.round(discountAmount / billingSplitParts)
-        ));
-      }
-    } else if (billingSplitType === "custom") {
-      paymentsPayload.push(createPaymentPayload(billingCustomAmount, paymentMethod, tipAmount, discountAmount));
-      // remaining
-      const remaining = totalToPay - billingCustomAmount;
-      if (remaining > 0) {
-        paymentsPayload.push(createPaymentPayload(remaining, PaymentMethod.CREDIT, 0, 0));
-      }
-    } else {
-      paymentsPayload.push(createPaymentPayload(totalToPay, paymentMethod, tipAmount, discountAmount));
-    }
+    // Each confirmation is one real payment and therefore one receipt.
+    const paymentsPayload = [createPaymentPayload(paymentAmount, paymentMethod, allocatedTip, allocatedDiscount)];
 
     try {
       const res = await fetch(`/api/orders/${activeOrder.id}/close`, {
@@ -604,33 +645,44 @@ export default function MozoView({
         body: JSON.stringify({
           payments: paymentsPayload,
           customerPhone: selectedBillingCreditCustomer?.phone || activeOrder.customerPhone || undefined,
-          totalAmount: orderTotal,
-          discount: discountAmount,
-          tip: tipAmount
+          totalAmount: billingSubtotal,
+          discount: billingDiscountAmount,
+          tip: billingTipAmount
         })
       });
 
       if (res.ok) {
+        const result = await res.json() as {
+          payments: Payment[];
+          remaining: number;
+          closed: boolean;
+        };
+        const processedPayments = result.payments || [];
         setBillingSuccess(true);
-        // Auto-print the receipt
-        if (activeOrder) {
+        setLastBillingPayments(processedPayments);
+        setLastBillingOrderId(activeOrder.id);
+        setBillingRemainingAfterPayment(result.remaining);
+        setBillingClosedAfterPayment(result.closed);
+        if (billingSplitType === "equal" && billingSplitParts > 1) {
+          setBillingSplitParts((parts) => Math.max(1, parts - 1));
+        }
+        setBillingCustomAmount(0);
+
+        if (activeOrder && processedPayments.length > 0) {
           printThermalReceipt({
             order: activeOrder,
             state,
-            payments: paymentsPayload,
+            payments: processedPayments,
             waiterName: activeUser?.name,
+            accountSubtotal: billingSubtotal,
+            accountDiscount: billingDiscountAmount,
+            accountTip: billingTipAmount,
+            accountTotal: billingAccountTotal,
+            previouslyPaid: activeOrderPaid,
+            remainingBalance: result.remaining,
           });
         }
-        setTimeout(() => {
-          setIsBillingOpen(false);
-          setSelectedTable(null);
-          setBillingSuccess(false);
-          setAppliedDiscount(0);
-          setSelectedPromoCode("");
-          setTipPercent(10);
-          setBillingCreditCustomerId("");
-          refreshStateIfNeeded();
-        }, 5000); // Extended to 5s so user can see success + receipt prints
+        refreshStateIfNeeded();
       } else {
         const err = await res.json().catch(() => ({}));
         showBanner(err.error || "No se pudo cerrar la cuenta.", "error");
@@ -1298,17 +1350,37 @@ export default function MozoView({
                     <div className="flex justify-between items-center text-sm">
                       <span className="font-bold text-zinc-600">Total mesa:</span>
                       <span className="font-black text-zinc-950 text-base">
-                        {formatCLP(calculateActiveOrderTotal())}
+                        {formatCLP(billingAccountTotal)}
                       </span>
                     </div>
+                    {activeOrderPaid > 0 && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs">
+                        <div className="flex justify-between font-bold text-emerald-700">
+                          <span>Pagado</span>
+                          <span>{formatCLP(activeOrderPaid)}</span>
+                        </div>
+                        <div className="mt-1 flex justify-between font-black text-amber-900">
+                          <span>Saldo pendiente</span>
+                          <span>{formatCLP(billingRemaining)}</span>
+                        </div>
+                      </div>
+                    )}
 
                     <button
                       onClick={() => {
                         if (!canBillActiveOrder) return;
                         setIsBillingOpen(true);
+                        setBillingSuccess(false);
+                        setLastBillingPayments([]);
+                        setLastBillingOrderId(activeOrder.id);
+                        setBillingCustomAmount(0);
                         setPaymentMethod(PaymentMethod.CASH);
                         setBillingCreditCustomerId("");
-                        setBillingSplitParts(activeOrder.customerCount || 2);
+                        setBillingSplitParts(Math.max(1, (activeOrder.customerCount || 2) - activeOrderPayments.length));
+                        if (activeOrder.billingSubtotal && activeOrder.billingTotal !== undefined) {
+                          setAppliedDiscount(Math.round(((activeOrder.billingDiscount || 0) / activeOrder.billingSubtotal) * 100));
+                          setTipPercent(Math.round(((activeOrder.billingTip || 0) / activeOrder.billingSubtotal) * 100));
+                        }
                       }}
                       disabled={!canBillActiveOrder}
                       title={canBillActiveOrder ? "Cobrar y cerrar mesa" : "Disponible cuando todos los pedidos salgan de cocina"}
@@ -1319,7 +1391,9 @@ export default function MozoView({
                       }`}
                     >
                       {canBillActiveOrder ? <Calculator className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
-                      {canBillActiveOrder ? "Cobrar / Cerrar Mesa" : "Esperando salida de cocina"}
+                      {canBillActiveOrder
+                        ? activeOrderPaid > 0 ? "Continuar cobro" : "Cobrar / Cerrar Mesa"
+                        : "Esperando salida de cocina"}
                     </button>
                   </div>
                 )}
@@ -1640,7 +1714,7 @@ export default function MozoView({
               {/* Header */}
               <div className="p-5 border-b border-zinc-100 flex justify-between items-center bg-zinc-50">
                 <div>
-                  <h3 className="font-black text-zinc-900 text-base">Cerrar Cuenta Mesa {selectedTable?.number}</h3>
+                  <h3 className="font-black text-zinc-900 text-base">Cobrar Cuenta Mesa {selectedTable?.number}</h3>
                   <span className="text-zinc-400 text-[10px] font-semibold uppercase">Hacienda Pago Seguros</span>
                 </div>
                 <button
@@ -1654,27 +1728,32 @@ export default function MozoView({
               {/* Body */}
               <div className="p-5 overflow-y-auto space-y-4 flex-1">
                 {billingSuccess ? (
-                  <div className="py-10 text-center space-y-4">
+                  <div className="py-8 text-center space-y-4">
                     <div className="w-16 h-16 bg-emerald-50 text-emerald-500 rounded-full flex items-center justify-center mx-auto">
                       <CheckCircle2 className="w-10 h-10 animate-bounce" />
                     </div>
                     <div>
-                      <h4 className="font-extrabold text-zinc-950 text-base">¡Pago Procesado de Forma Exitosa!</h4>
-                      <p className="text-zinc-400 text-xs mt-1">La mesa ha sido liberada y los puntos de fidelización fueron cargados.</p>
+                      <h4 className="font-extrabold text-zinc-950 text-base">Pago registrado correctamente</h4>
+                      <p className="text-zinc-500 text-xs mt-1">
+                        {billingClosedAfterPayment
+                          ? "La cuenta quedó pagada y la mesa fue liberada."
+                          : `La mesa sigue abierta. Saldo pendiente: ${formatCLP(billingRemainingAfterPayment)}.`}
+                      </p>
                     </div>
-                    {activeOrder && (
+                    {billingOrder && lastBillingPayments.length > 0 && (
                       <button
                         onClick={() =>
                           printThermalReceipt({
-                            order: activeOrder,
+                            order: billingOrder,
                             state,
-                            payments: [{
-                              amount: calculateActiveOrderTotal(),
-                              method: paymentMethod,
-                              tip: calculateActiveOrderTotal() * (tipPercent / 100),
-                              discount: calculateActiveOrderTotal() * (appliedDiscount / 100),
-                            }],
+                            payments: lastBillingPayments,
                             waiterName: activeUser?.name,
+                            accountSubtotal: billingSubtotal,
+                            accountDiscount: billingDiscountAmount,
+                            accountTip: billingTipAmount,
+                            accountTotal: billingAccountTotal,
+                            previouslyPaid: Math.max(0, billingAccountTotal - billingRemainingAfterPayment - lastBillingPayments.reduce((sum, payment) => sum + payment.amount, 0)),
+                            remainingBalance: billingRemainingAfterPayment,
                           })
                         }
                         className="inline-flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold text-xs py-3 px-6 rounded-xl transition-all cursor-pointer mx-auto"
@@ -1683,6 +1762,36 @@ export default function MozoView({
                         Reimprimir Boleta
                       </button>
                     )}
+                    <div className="flex gap-2 pt-2">
+                      {!billingClosedAfterPayment && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBillingSuccess(false);
+                            setPaymentMethod(PaymentMethod.CASH);
+                            setBillingCreditCustomerId("");
+                          }}
+                          className="flex-1 rounded-xl bg-emerald-600 px-4 py-3 text-xs font-extrabold text-white hover:bg-emerald-700"
+                        >
+                          Cobrar siguiente pago
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsBillingOpen(false);
+                          setBillingSuccess(false);
+                          if (billingClosedAfterPayment) setSelectedTable(null);
+                          setAppliedDiscount(0);
+                          setSelectedPromoCode("");
+                          setTipPercent(10);
+                          setBillingCreditCustomerId("");
+                        }}
+                        className="flex-1 rounded-xl border border-zinc-200 bg-white px-4 py-3 text-xs font-bold text-zinc-700 hover:bg-zinc-50"
+                      >
+                        {billingClosedAfterPayment ? "Finalizar" : "Cerrar por ahora"}
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <>
@@ -1690,31 +1799,37 @@ export default function MozoView({
                     <div className="bg-zinc-50 border border-zinc-100 rounded-2xl p-4 text-xs space-y-2">
                       <div className="flex justify-between">
                         <span className="text-zinc-500 font-bold">Consumo de mesa</span>
-                        <span className="text-zinc-900 font-extrabold">{formatCLP(calculateActiveOrderTotal())}</span>
+                        <span className="text-zinc-900 font-extrabold">{formatCLP(billingSubtotal)}</span>
                       </div>
                       
-                      {appliedDiscount > 0 && (
+                      {billingDiscountAmount > 0 && (
                         <div className="flex justify-between text-red-500">
-                          <span className="font-bold">Descuento ({appliedDiscount}%)</span>
-                          <span>-{formatCLP(calculateActiveOrderTotal() * (appliedDiscount / 100))}</span>
+                          <span className="font-bold">Descuento</span>
+                          <span>-{formatCLP(billingDiscountAmount)}</span>
                         </div>
                       )}
 
                       <div className="flex justify-between">
-                        <span className="text-zinc-500 font-bold">Propina sugerida ({tipPercent}%)</span>
-                        <span className="text-zinc-900 font-extrabold">{formatCLP(calculateActiveOrderTotal() * (tipPercent / 100))}</span>
+                        <span className="text-zinc-500 font-bold">Propina sugerida</span>
+                        <span className="text-zinc-900 font-extrabold">{formatCLP(billingTipAmount)}</span>
                       </div>
 
                       <div className="border-t border-zinc-200/50 pt-2 flex justify-between font-black text-sm text-zinc-950">
-                        <span>Total Final a Pagar</span>
-                        <span>
-                          {formatCLP(
-                            calculateActiveOrderTotal() - 
-                            Math.round(calculateActiveOrderTotal() * (appliedDiscount / 100)) + 
-                            Math.round(calculateActiveOrderTotal() * (tipPercent / 100))
-                          )}
-                        </span>
+                        <span>Total cuenta</span>
+                        <span>{formatCLP(billingAccountTotal)}</span>
                       </div>
+                      {activeOrderPaid > 0 && (
+                        <>
+                          <div className="flex justify-between font-bold text-emerald-700">
+                            <span>Pagado</span>
+                            <span>{formatCLP(activeOrderPaid)}</span>
+                          </div>
+                          <div className="flex justify-between rounded-lg bg-amber-50 px-2 py-2 font-black text-amber-900">
+                            <span>Saldo pendiente</span>
+                            <span>{formatCLP(billingRemaining)}</span>
+                          </div>
+                        </>
+                      )}
                     </div>
 
                     {/* Split selector */}
@@ -1755,9 +1870,9 @@ export default function MozoView({
                           className="flex items-center gap-4 bg-zinc-50 border border-zinc-100 rounded-2xl p-3 text-xs"
                         >
                           <div className="flex-1">
-                            <span className="text-zinc-500 font-semibold block">Partes:</span>
+                            <span className="text-zinc-500 font-semibold block">Personas restantes:</span>
                             <div className="flex items-center gap-2 mt-1">
-                              <button onClick={() => setBillingSplitParts(p => Math.max(2, p - 1))} className="bg-zinc-200 hover:bg-zinc-300 p-1.5 rounded text-zinc-700 font-bold">-</button>
+                              <button onClick={() => setBillingSplitParts(p => Math.max(1, p - 1))} className="bg-zinc-200 hover:bg-zinc-300 p-1.5 rounded text-zinc-700 font-bold">-</button>
                               <span className="font-extrabold text-zinc-900 px-1 text-sm">{billingSplitParts}</span>
                               <button onClick={() => setBillingSplitParts(p => p + 1)} className="bg-zinc-200 hover:bg-zinc-300 p-1.5 rounded text-zinc-700 font-bold">+</button>
                             </div>
@@ -1765,11 +1880,7 @@ export default function MozoView({
                           <div className="text-right">
                             <span className="text-zinc-400 block font-semibold">Monto por persona:</span>
                             <span className="text-zinc-900 font-black text-sm">
-                              {formatCLP(
-                                (calculateActiveOrderTotal() - 
-                                Math.round(calculateActiveOrderTotal() * (appliedDiscount / 100)) + 
-                                Math.round(calculateActiveOrderTotal() * (tipPercent / 100))) / billingSplitParts
-                              )}
+                              {formatCLP(nextBillingPaymentAmount)}
                             </span>
                           </div>
                         </motion.div>
@@ -1787,29 +1898,35 @@ export default function MozoView({
                             <DollarSign className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
                             <input
                               type="number"
+                              min={1}
+                              max={billingRemaining}
                               placeholder="Ej. 10000"
                               value={billingCustomAmount || ""}
                               onChange={(e) => setBillingCustomAmount(Number(e.target.value))}
                               className="w-full bg-zinc-50 border border-zinc-200 rounded-xl py-2.5 pl-8 pr-4 text-xs text-zinc-900 focus:outline-none"
                             />
                           </div>
-                          <span className="text-[10px] text-zinc-400 block">Restante se cargará a un método secundario.</span>
+                          <span className="text-[10px] text-zinc-400 block">Se emitirá una boleta por este monto. El saldo permanecerá en la mesa.</span>
                         </motion.div>
                       )}
                     </div>
 
                     {/* Tip configurations */}
                     <div className="space-y-1.5">
-                      <span className="text-[10px] font-black uppercase text-zinc-400 block tracking-wider">Propina Mozo (10% sugerido)</span>
+                      <span className="text-[10px] font-black uppercase text-zinc-400 block tracking-wider">
+                        Propina Mozo {billingTermsLocked ? "(definida en el primer pago)" : "(10% sugerido)"}
+                      </span>
                       <div className="flex gap-2">
                         {[0, 10, 15, 20].map((t) => (
                           <button
                             key={t}
                             onClick={() => setTipPercent(t)}
-                            className={`flex-1 py-2 border rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                            disabled={billingTermsLocked}
+                            className={`flex-1 py-2 border rounded-xl text-xs font-bold transition-all ${
                               tipPercent === t 
                                 ? "bg-amber-100 border-amber-300 text-amber-900" 
                                 : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                            } ${billingTermsLocked ? "cursor-not-allowed opacity-60" : "cursor-pointer"
                             }`}
                           >
                             {t}%
@@ -1819,7 +1936,7 @@ export default function MozoView({
                     </div>
 
                     {/* Promo Codes */}
-                    <div className="space-y-1.5">
+                    <div className={`space-y-1.5 ${billingTermsLocked ? "opacity-60" : ""}`}>
                       <span className="text-[10px] font-black uppercase text-zinc-400 block tracking-wider">Aplicar Cupón</span>
                       <div className="flex gap-2">
                         <input
@@ -1827,11 +1944,13 @@ export default function MozoView({
                           placeholder="BIENVENIDO, DIADELMOZO"
                           value={selectedPromoCode}
                           onChange={(e) => setSelectedPromoCode(e.target.value)}
+                          disabled={billingTermsLocked}
                           className="flex-1 bg-zinc-50 border border-zinc-200 rounded-xl p-2.5 text-xs text-zinc-900 uppercase focus:outline-none focus:border-amber-500"
                         />
                         <button
                           onClick={handleApplyPromo}
-                          className="bg-zinc-900 hover:bg-amber-600 text-white font-bold px-4 rounded-xl text-xs cursor-pointer"
+                          disabled={billingTermsLocked}
+                          className="bg-zinc-900 hover:bg-amber-600 disabled:bg-zinc-300 text-white font-bold px-4 rounded-xl text-xs cursor-pointer disabled:cursor-not-allowed"
                         >
                           Aplicar
                         </button>
@@ -1915,14 +2034,16 @@ export default function MozoView({
                   </button>
                   <button
                     onClick={handleCloseBillSubmit}
-                    disabled={paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer}
+                    disabled={isBillingAmountInvalid || (paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer)}
                     className={`flex-2 text-white font-extrabold py-3 rounded-xl text-xs shadow-md transition-colors ${
-                      paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer
+                      isBillingAmountInvalid || (paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer)
                         ? "bg-zinc-300 cursor-not-allowed"
                         : "bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
                     }`}
                   >
-                    {paymentMethod === PaymentMethod.ACCOUNT ? "Confirmar cargo a cuenta" : "Confirmar Cobro"}
+                    {paymentMethod === PaymentMethod.ACCOUNT
+                      ? `Confirmar cargo ${formatCLP(nextBillingPaymentAmount)}`
+                      : `Cobrar ${formatCLP(nextBillingPaymentAmount)}`}
                   </button>
                 </div>
               )}

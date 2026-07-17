@@ -19,6 +19,7 @@ import {
 import { DEMO_STATE } from "./demoState";
 import { isDirectServiceProduct } from "./orderUtils";
 import { createTable, ensureMinimumTables } from "./tableUtils";
+import { getRemainingBalance } from "./billingUtils";
 
 const STATE_DOC_REF = doc(db, "settings", "restaurant_state");
 
@@ -739,6 +740,19 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       const id = orderCloseMatch[1];
       const { payments, customerPhone, totalAmount, discount, tip } = body;
       let errorMsg = "";
+      let createdPayments: Array<{
+        id: string;
+        orderId: string;
+        amount: number;
+        method: PaymentMethod;
+        tip: number;
+        discount: number;
+        createdAt: string;
+        creditCustomerId?: string;
+        creditCustomerName?: string;
+      }> = [];
+      let remainingBalance = 0;
+      let orderClosed = false;
 
       const updated = await updateState(s => {
         const order = s.orders.find(o => o.id === id);
@@ -753,7 +767,32 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           return;
         }
 
-        const accountPayment = payments.find((pay: any) => pay.method === PaymentMethod.ACCOUNT);
+        const requestedPayments = Array.isArray(payments) ? payments : [];
+        const requestedTotal = requestedPayments.reduce((sum: number, pay: any) => sum + Number(pay.amount || 0), 0);
+        const proposedSubtotal = Math.max(0, Math.round(Number(totalAmount) || 0));
+        const proposedDiscount = Math.max(0, Math.round(Number(discount) || 0));
+        const proposedTip = Math.max(0, Math.round(Number(tip) || 0));
+        const proposedBillingTotal = proposedSubtotal - proposedDiscount + proposedTip;
+        const billingTotal = order.billingTotal ?? proposedBillingTotal;
+        const alreadyPaid = s.payments
+          .filter(payment => payment.orderId === id)
+          .reduce((sum, payment) => sum + payment.amount, 0);
+        const balanceBeforePayment = getRemainingBalance(billingTotal, alreadyPaid);
+
+        if (billingTotal <= 0 || requestedPayments.length === 0 || !Number.isFinite(requestedTotal) || requestedTotal <= 0) {
+          errorMsg = "Ingresa un monto de pago válido";
+          return;
+        }
+        if (requestedPayments.some((pay: any) => !Number.isFinite(Number(pay.amount)) || Number(pay.amount) <= 0)) {
+          errorMsg = "Todos los pagos deben tener un monto válido";
+          return;
+        }
+        if (requestedTotal > balanceBeforePayment) {
+          errorMsg = `El pago supera el saldo pendiente de $${balanceBeforePayment.toLocaleString("es-CL")}`;
+          return;
+        }
+
+        const accountPayment = requestedPayments.find((pay: any) => pay.method === PaymentMethod.ACCOUNT);
         let accountCustomer: Customer | null = null;
         if (accountPayment) {
           accountCustomer = s.customers.find(c => c.id === accountPayment.creditCustomerId || c.phone === customerPhone) || null;
@@ -764,7 +803,16 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           order.customerPhone = accountCustomer.phone;
         }
 
-        payments.forEach((pay: any) => {
+        if (order.billingTotal === undefined) {
+          order.billingSubtotal = proposedSubtotal;
+          order.billingDiscount = proposedDiscount;
+          order.billingTip = proposedTip;
+          order.billingTotal = proposedBillingTotal;
+        }
+
+        createdPayments = [];
+        const paymentCreatedAt = new Date().toISOString();
+        requestedPayments.forEach((pay: any) => {
           const creditCustomer = pay.method === PaymentMethod.ACCOUNT ? accountCustomer : null;
           const payment = {
             id: "pay_" + Math.random().toString(36).substring(2, 11),
@@ -773,7 +821,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             method: pay.method as PaymentMethod,
             tip: pay.tip || 0,
             discount: pay.discount || 0,
-            createdAt: new Date().toISOString()
+            createdAt: paymentCreatedAt
           };
           if (creditCustomer) {
             Object.assign(payment, {
@@ -782,31 +830,34 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             });
           }
           s.payments.push(payment);
+          createdPayments.push(payment);
         });
 
-        order.status = OrderStatus.CLOSED;
-        order.updatedAt = new Date().toISOString();
+        remainingBalance = getRemainingBalance(billingTotal, alreadyPaid + requestedTotal);
+        orderClosed = remainingBalance === 0;
+        order.updatedAt = paymentCreatedAt;
 
         const table = s.tables.find(t => t.id === order.tableId);
-        if (table) {
-          table.status = TableStatus.FREE;
-        }
+        if (orderClosed) {
+          order.status = OrderStatus.CLOSED;
+          if (table) table.status = TableStatus.FREE;
 
-        const loyaltyPhone = accountCustomer?.phone || customerPhone;
-        if (loyaltyPhone) {
-          const customer = s.customers.find(c => c.phone === loyaltyPhone);
-          if (customer) {
-            const earnedPoints = Math.floor((totalAmount - (discount || 0)) / 100);
-            if (earnedPoints > 0) {
-              customer.points += earnedPoints;
-              s.loyaltyTxs.push({
-                id: "tx_" + Math.random().toString(36).substring(2, 11),
-                customerId: customer.id,
-                points: earnedPoints,
-                type: LoyaltyTxType.EARNED,
-                description: `Puntos ganados por consumo de Mesa ${table ? table.number : ""}`,
-                createdAt: new Date().toISOString()
-              });
+          const loyaltyPhone = accountCustomer?.phone || customerPhone || order.customerPhone;
+          if (loyaltyPhone) {
+            const customer = s.customers.find(c => c.phone === loyaltyPhone);
+            if (customer) {
+              const earnedPoints = Math.floor(((order.billingSubtotal || proposedSubtotal) - (order.billingDiscount || 0)) / 100);
+              if (earnedPoints > 0) {
+                customer.points += earnedPoints;
+                s.loyaltyTxs.push({
+                  id: "tx_" + Math.random().toString(36).substring(2, 11),
+                  customerId: customer.id,
+                  points: earnedPoints,
+                  type: LoyaltyTxType.EARNED,
+                  description: `Puntos ganados por consumo de Mesa ${table ? table.number : ""}`,
+                  createdAt: paymentCreatedAt
+                });
+              }
             }
           }
         }
@@ -815,7 +866,13 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       if (errorMsg) {
         return createResponse({ error: errorMsg }, 400);
       }
-      return createResponse({ success: true, state: updated });
+      return createResponse({
+        success: true,
+        state: updated,
+        payments: createdPayments,
+        remaining: remainingBalance,
+        closed: orderClosed,
+      });
     }
 
     // 10. Customer loyalty actions
