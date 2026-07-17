@@ -405,7 +405,7 @@ export default function MozoView({
             const product = nextState.products.find((candidate) => candidate.id === item.productId);
             item.status = isDirectServiceProduct(product)
               ? OrderItemStatus.READY
-              : OrderItemStatus.SENT_TO_KITCHEN;
+              : OrderItemStatus.PREPARING;
           }
         });
         const hasKitchenQueueItems = order.items.some((item) =>
@@ -1252,9 +1252,9 @@ export default function MozoView({
                                 >
                                   {isUpdating && "Actualizando..."}
                                   {!isUpdating && it.status === OrderItemStatus.PENDING && "Pendiente"}
-                                  {!isUpdating && it.status === OrderItemStatus.SENT_TO_KITCHEN && "Enviado a cocina"}
-                                  {!isUpdating && it.status === OrderItemStatus.RECEIVED && "Recepcionado"}
-                                  {!isUpdating && it.status === OrderItemStatus.PREPARING && "Preparando"}
+                                  {!isUpdating && it.status === OrderItemStatus.SENT_TO_KITCHEN && "Cocinando"}
+                                  {!isUpdating && it.status === OrderItemStatus.RECEIVED && "Cocinando"}
+                                  {!isUpdating && it.status === OrderItemStatus.PREPARING && "Cocinando"}
                                   {!isUpdating && it.status === OrderItemStatus.READY && "Entregar"}
                                   {!isUpdating && it.status === OrderItemStatus.DELIVERED && "Servido ✔"}
                                 </button>

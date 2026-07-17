@@ -766,13 +766,13 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                         <span className="text-zinc-400 text-[10px]">En cola</span>
                       )}
                       {it.status === OrderItemStatus.SENT_TO_KITCHEN && (
-                        <span className="text-amber-600 text-[10px] font-bold">Enviado a cocina</span>
+                        <span className="text-amber-600 text-[10px] font-bold">Cocinando</span>
                       )}
                       {it.status === OrderItemStatus.RECEIVED && (
-                        <span className="text-cyan-600 text-[10px] font-bold">Recepcionado</span>
+                        <span className="text-amber-600 text-[10px] font-bold">Cocinando</span>
                       )}
                       {it.status === OrderItemStatus.PREPARING && (
-                        <span className="text-blue-500 text-[10px] font-bold animate-pulse">Preparando</span>
+                        <span className="text-amber-600 text-[10px] font-bold animate-pulse">Cocinando</span>
                       )}
                       {it.status === OrderItemStatus.READY && (
                         <span className="text-emerald-500 text-[10px] font-bold">Listo</span>

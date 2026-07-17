@@ -106,18 +106,17 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
           candidate.status === OrderItemStatus.READY || candidate.status === OrderItemStatus.DELIVERED
         );
         const allDelivered = order.items.every((candidate) => candidate.status === OrderItemStatus.DELIVERED);
-        const anyPreparing = order.items.some((candidate) => candidate.status === OrderItemStatus.PREPARING);
-        const anyKitchenQueue = order.items.some((candidate) =>
-          candidate.status === OrderItemStatus.SENT_TO_KITCHEN || candidate.status === OrderItemStatus.RECEIVED
+        const anyCooking = order.items.some((candidate) =>
+          candidate.status === OrderItemStatus.SENT_TO_KITCHEN ||
+          candidate.status === OrderItemStatus.RECEIVED ||
+          candidate.status === OrderItemStatus.PREPARING
         );
         order.status = allDelivered
           ? OrderStatus.DELIVERED
           : allReady
           ? OrderStatus.READY
-          : anyPreparing
+          : anyCooking
           ? OrderStatus.PREPARING
-          : anyKitchenQueue
-          ? OrderStatus.PENDING_KITCHEN
           : order.status;
       });
     }
@@ -189,9 +188,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 flex-1">
         {filteredOrders.map((order) => {
           const visibleItems = order.items.filter(isVisibleKitchenItem);
-          const hasNewItems = visibleItems.some((it) => it.status === OrderItemStatus.SENT_TO_KITCHEN);
-          const hasReceivedItems = visibleItems.some((it) => it.status === OrderItemStatus.RECEIVED);
-          const hasRunningItems = visibleItems.some((it) =>
+          const hasCookingItems = visibleItems.some((it) =>
             it.status === OrderItemStatus.SENT_TO_KITCHEN ||
             it.status === OrderItemStatus.RECEIVED ||
             it.status === OrderItemStatus.PREPARING
@@ -203,9 +200,9 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
             it.status === OrderItemStatus.DELIVERED
           );
           const timerStartedAt = order.kitchenSentAt || order.updatedAt || order.createdAt;
-          const elapsedMins = hasRunningItems ? getElapsedMinutes(timerStartedAt) : 0;
-          const isLate = hasRunningItems && elapsedMins >= 10;
-          const isResolved = !hasRunningItems && allVisibleItemsReady;
+          const elapsedMins = hasCookingItems ? getElapsedMinutes(timerStartedAt) : 0;
+          const isLate = hasCookingItems && elapsedMins >= 10;
+          const isResolved = !hasCookingItems && allVisibleItemsReady;
 
           return (
             <div
@@ -213,10 +210,8 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
               className={`bg-zinc-900 border rounded-2xl overflow-hidden flex flex-col justify-between transition-all ${
                 isLate 
                   ? "border-red-500/50 ring-2 ring-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.15)] animate-pulse" 
-                  : hasNewItems
+                  : hasCookingItems
                   ? "border-amber-400 ring-2 ring-amber-400/30 shadow-[0_0_18px_rgba(251,191,36,0.18)] animate-pulse"
-                  : hasReceivedItems
-                  ? "border-cyan-500/60 ring-1 ring-cyan-500/20 shadow-[0_0_15px_rgba(6,182,212,0.12)]"
                   : isResolved
                   ? "border-emerald-500/40 ring-1 ring-emerald-500/15 shadow-[0_0_15px_rgba(16,185,129,0.12)]"
                   : "border-zinc-800 shadow-xl"
@@ -226,10 +221,8 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
               <div className={`p-3.5 flex justify-between items-start ${
                 isLate
                   ? "bg-red-950/40"
-                  : hasNewItems
+                  : hasCookingItems
                   ? "bg-amber-950/50"
-                  : hasReceivedItems
-                  ? "bg-cyan-950/40"
                   : isResolved
                   ? "bg-emerald-950/30"
                   : "bg-zinc-800/50"
@@ -245,17 +238,15 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                 <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black ${
                   isLate
                     ? "bg-red-500/20 text-red-400 border border-red-500/30"
-                    : hasNewItems
+                    : hasCookingItems
                     ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                    : hasReceivedItems
-                    ? "bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
                     : isResolved
                     ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
                     : "bg-zinc-800 text-zinc-300 border border-zinc-700"
                 }`}>
                   <Clock className="w-3.5 h-3.5" />
                   <span>
-                    {hasRunningItems ? getElapsedTimeText(timerStartedAt) : allVisibleItemsDelivered ? "Servido" : "Listo"}
+                    {hasCookingItems ? getElapsedTimeText(timerStartedAt) : allVisibleItemsDelivered ? "Servido" : "Listo"}
                   </span>
                   {isLate && <AlertTriangle className="w-3.5 h-3.5 text-red-400 animate-bounce" />}
                 </div>
@@ -297,19 +288,11 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
 
                           {/* Status indicators */}
                           <div className="text-right">
-                            {it.status === OrderItemStatus.SENT_TO_KITCHEN && (
+                            {(it.status === OrderItemStatus.SENT_TO_KITCHEN ||
+                              it.status === OrderItemStatus.RECEIVED ||
+                              it.status === OrderItemStatus.PREPARING) && (
                               <span className="text-amber-300 text-[10px] uppercase font-black tracking-wider animate-pulse">
-                                Nuevo pedido
-                              </span>
-                            )}
-                            {it.status === OrderItemStatus.RECEIVED && (
-                              <span className="text-cyan-300 text-[10px] uppercase font-black tracking-wider">
-                                Recepcionado
-                              </span>
-                            )}
-                            {it.status === OrderItemStatus.PREPARING && (
-                              <span className="text-blue-400 text-[10px] uppercase font-black tracking-wider animate-pulse">
-                                Preparando
+                                Cocinando
                               </span>
                             )}
                             {it.status === OrderItemStatus.READY && (
@@ -325,37 +308,17 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
 
                         {/* Status Change Nudges */}
                         <div className="flex justify-end gap-1.5 mt-1.5">
-                          {it.status === OrderItemStatus.SENT_TO_KITCHEN && (
-                            <button
-                              onClick={() => handleUpdateItemStatus(order.id, it.id, OrderItemStatus.RECEIVED)}
-                              disabled={isUpdating}
-                              className={`font-bold text-[10px] py-1 px-3 rounded-lg border transition-colors ${
-                                isUpdating ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" : "bg-amber-500 hover:bg-amber-400 text-zinc-950 border-amber-400 cursor-pointer"
-                              }`}
-                            >
-                              {isUpdating ? "Actualizando..." : "Recepcionar"}
-                            </button>
-                          )}
-                          {it.status === OrderItemStatus.RECEIVED && (
-                            <button
-                              onClick={() => handleUpdateItemStatus(order.id, it.id, OrderItemStatus.PREPARING)}
-                              disabled={isUpdating}
-                              className={`font-bold text-[10px] py-1 px-3 rounded-lg border transition-colors ${
-                                isUpdating ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" : "bg-cyan-950 hover:bg-blue-600 text-cyan-100 border-cyan-700 cursor-pointer"
-                              }`}
-                            >
-                              {isUpdating ? "Actualizando..." : "Comenzar preparación"}
-                            </button>
-                          )}
-                          {it.status === OrderItemStatus.PREPARING && (
+                          {(it.status === OrderItemStatus.SENT_TO_KITCHEN ||
+                            it.status === OrderItemStatus.RECEIVED ||
+                            it.status === OrderItemStatus.PREPARING) && (
                             <button
                               onClick={() => handleUpdateItemStatus(order.id, it.id, OrderItemStatus.READY)}
                               disabled={isUpdating}
                               className={`font-bold text-[10px] py-1 px-3 rounded-lg border transition-colors ${
-                                isUpdating ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" : "bg-zinc-800 hover:bg-emerald-600 text-white border-zinc-700 cursor-pointer"
+                                isUpdating ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" : "bg-amber-500 hover:bg-emerald-600 text-zinc-950 hover:text-white border-amber-400 cursor-pointer"
                               }`}
                             >
-                              {isUpdating ? "Actualizando..." : "Listo / Servir"}
+                              {isUpdating ? "Actualizando..." : "Marcar listo"}
                             </button>
                           )}
                           {it.status === OrderItemStatus.READY && (
