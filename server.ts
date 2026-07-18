@@ -21,6 +21,7 @@ import {
 } from "./src/types.js";
 import { createTable, ensureMinimumTables } from "./src/tableUtils.js";
 import { isDirectServiceProduct } from "./src/orderUtils.js";
+import { recalculateOrderStatus, restoreOrderItemStock } from "./src/orderItemMutationUtils.js";
 import { getRemainingBalance } from "./src/billingUtils.js";
 
 dotenv.config({ path: ".env.local" });
@@ -364,13 +365,99 @@ async function startServer() {
         errorMsg = "Ítem no encontrado.";
         return;
       }
-      if (item.status !== OrderItemStatus.PENDING) {
-        errorMsg = "Solo se pueden eliminar ítems que todavía están pendientes.";
+      if (state.payments.some(payment => payment.orderId === id)) {
+        errorMsg = "No se puede modificar una comanda que ya tiene pagos o boletas emitidas.";
         return;
       }
-      if (req.body.removeAll !== true && item.quantity > 1) item.quantity -= 1;
+      const changeReason = typeof req.body.changeReason === "string" ? req.body.changeReason.trim() : "";
+      if (item.status !== OrderItemStatus.PENDING && !changeReason) {
+        errorMsg = "Debes indicar el motivo para eliminar un ítem enviado o servido.";
+        return;
+      }
+      const removedQuantity = req.body.removeAll !== true && item.quantity > 1 ? 1 : item.quantity;
+      const product = state.products.find(candidate => candidate.id === item.productId);
+      restoreOrderItemStock(item, removedQuantity, order.id, state);
+      if (removedQuantity < item.quantity) item.quantity -= removedQuantity;
       else order.items = order.items.filter(candidate => candidate.id !== itemId);
-      order.updatedAt = new Date().toISOString();
+      const now = new Date().toISOString();
+      order.updatedAt = now;
+      recalculateOrderStatus(order);
+      const user = state.users.find(candidate => candidate.id === req.body.userId);
+      const table = state.tables.find(candidate => candidate.id === order.tableId);
+      state.auditLogs.push({
+        id: "audit_" + Math.random().toString(36).substr(2, 9),
+        userId: user?.id,
+        userName: user?.name || "Mozo",
+        action: "Ítem Eliminado",
+        details: `Mesa ${table?.number || "?"}: se eliminó ${removedQuantity}x ${product?.name || "producto"} (${item.status}). Motivo: ${changeReason || "Corrección antes de cocina"}.`,
+        createdAt: now,
+      });
+    });
+    if (errorMsg) return res.status(400).json({ error: errorMsg });
+    res.json({ success: true, order: LocalDb.getState().orders.find(candidate => candidate.id === id) });
+  });
+
+  app.put("/api/orders/:id/items/:itemId", (req, res) => {
+    const { id, itemId } = req.params;
+    const quantity = Number(req.body.quantity);
+    if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+      return res.status(400).json({ error: "La cantidad debe estar entre 1 y 99." });
+    }
+    let errorMsg = "";
+    LocalDb.updateState(state => {
+      const order = state.orders.find(candidate => candidate.id === id && candidate.status !== OrderStatus.CLOSED);
+      if (!order) {
+        errorMsg = "Comanda activa no encontrada.";
+        return;
+      }
+      if (state.payments.some(payment => payment.orderId === id)) {
+        errorMsg = "No se puede modificar una comanda que ya tiene pagos o boletas emitidas.";
+        return;
+      }
+      const item = order.items.find(candidate => candidate.id === itemId);
+      const newProduct = state.products.find(candidate => candidate.id === req.body.productId);
+      if (!item || !newProduct) {
+        errorMsg = !item ? "Ítem no encontrado." : "Producto no encontrado.";
+        return;
+      }
+
+      const changeReason = typeof req.body.changeReason === "string" ? req.body.changeReason.trim() : "";
+      if (item.status !== OrderItemStatus.PENDING && !changeReason) {
+        errorMsg = "Debes indicar el motivo para cambiar un ítem enviado o servido.";
+        return;
+      }
+      const previousItem: OrderItem = { ...item, selectedModifiers: [...(item.selectedModifiers || [])] };
+      const previousProduct = state.products.find(candidate => candidate.id === previousItem.productId);
+      const wasPending = previousItem.status === OrderItemStatus.PENDING;
+      restoreOrderItemStock(previousItem, previousItem.quantity, order.id, state);
+
+      item.productId = newProduct.id;
+      item.quantity = quantity;
+      item.notes = typeof req.body.notes === "string" ? req.body.notes : "";
+      item.selectedModifiers = Array.isArray(req.body.selectedModifiers) ? req.body.selectedModifiers : [];
+      item.tanda = Number(req.body.tanda) || 1;
+      const now = new Date().toISOString();
+      if (wasPending) {
+        item.status = OrderItemStatus.PENDING;
+      } else if (isDirectServiceProduct(newProduct)) {
+        item.status = OrderItemStatus.READY;
+      } else {
+        item.status = OrderItemStatus.PREPARING;
+        LocalDb.deductStockForOrder({ ...order, items: [item] }, state);
+        order.kitchenSentAt = now;
+      }
+      order.updatedAt = now;
+      recalculateOrderStatus(order);
+      const user = state.users.find(candidate => candidate.id === req.body.userId);
+      const table = state.tables.find(candidate => candidate.id === order.tableId);
+      state.auditLogs.push({
+        id: "audit_" + Math.random().toString(36).substr(2, 9),
+        userId: user?.id,
+        userName: user?.name || "Mozo",
+        action: "Ítem Cambiado",
+        details: `Mesa ${table?.number || "?"}: ${previousItem.quantity}x ${previousProduct?.name || "producto"} fue cambiado por ${quantity}x ${newProduct.name}. Motivo: ${changeReason || "Corrección antes de cocina"}.`,
+        createdAt: now,
+      });
     });
     if (errorMsg) return res.status(400).json({ error: errorMsg });
     res.json({ success: true, order: LocalDb.getState().orders.find(candidate => candidate.id === id) });

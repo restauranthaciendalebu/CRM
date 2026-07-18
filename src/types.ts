@@ -242,7 +242,7 @@ export interface InventoryTransaction {
   ingredientId: string;
   ingredientName: string;
   change: number; // e.g. -150 or +1000
-  type: "ORDER_DEDUCTION" | "MANUAL_ADDITION" | "MANUAL_SUBTRACTION" | "VOID_RESTORE";
+  type: "ORDER_DEDUCTION" | "MANUAL_ADDITION" | "MANUAL_SUBTRACTION" | "VOID_RESTORE" | "ITEM_CHANGE_RESTORE";
   referenceId?: string; // orderId, etc.
   createdAt: string;
 }

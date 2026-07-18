@@ -33,7 +33,8 @@ import {
   Printer,
   ReceiptText,
   Trash2,
-  Minus
+  Minus,
+  Pencil
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { printThermalReceipt } from "./ThermalReceipt";
@@ -103,6 +104,8 @@ export default function MozoView({
   }>>([]);
   const [waiterSearchTerm, setWaiterSearchTerm] = useState("");
   const [waiterCategoryFilter, setWaiterCategoryFilter] = useState("all");
+  const [editingOrderItemId, setEditingOrderItemId] = useState<string | null>(null);
+  const [editingOrderItemReason, setEditingOrderItemReason] = useState("");
   const [pendingOrderActionIds, setPendingOrderActionIds] = useState<string[]>([]);
   const [isSendingKitchen, setIsSendingKitchen] = useState(false);
   const [isAddTableOpen, setIsAddTableOpen] = useState(false);
@@ -220,6 +223,7 @@ export default function MozoView({
     ? state.payments.filter((payment) => payment.orderId === billingOrder.id)
     : [];
   const activeOrderPaid = activeOrderPayments.reduce((sum, payment) => sum + payment.amount, 0);
+  const activeOrderHasPayments = Boolean(activeOrder && state.payments.some((payment) => payment.orderId === activeOrder.id));
   const hasPendingKitchenItems = activeOrder?.items.some((it) => it.status === OrderItemStatus.PENDING) ?? false;
   const canBillActiveOrder = Boolean(
     activeOrder?.items.length && activeOrder.items.every((item) =>
@@ -230,6 +234,38 @@ export default function MozoView({
   const selectedBillingCreditCustomer = authorizedCreditCustomers.find((c) => c.id === billingCreditCustomerId);
 
   const openAddItemsModal = () => {
+    setEditingOrderItemId(null);
+    setEditingOrderItemReason("");
+    setWaiterCart([]);
+    setWaiterSearchTerm("");
+    setWaiterCategoryFilter("all");
+    setIsAddingItems(true);
+  };
+
+  const openEditItemModal = (item: OrderItem, product: Product) => {
+    if (activeOrderHasPayments) {
+      showBanner("La comanda ya tiene un pago o una boleta emitida y no puede modificarse.", "error");
+      return;
+    }
+    const reason = item.status === OrderItemStatus.PENDING
+      ? "Corrección antes de enviar a cocina"
+      : window.prompt("Indica el motivo del cambio (por ejemplo: cliente cambió de opinión):", "")?.trim();
+    if (!reason) {
+      if (item.status !== OrderItemStatus.PENDING) showBanner("Debes indicar el motivo del cambio.", "error");
+      return;
+    }
+    setEditingOrderItemId(item.id);
+    setEditingOrderItemReason(reason);
+    setWaiterCart([{
+      product,
+      quantity: item.quantity,
+      notes: item.notes || "",
+      modifiers: [...(item.selectedModifiers || [])],
+      adjustmentType: "extra",
+      adjustmentValueType: "amount",
+      adjustmentAmount: 0,
+      adjustmentLabel: "",
+    }]);
     setWaiterSearchTerm("");
     setWaiterCategoryFilter("all");
     setIsAddingItems(true);
@@ -315,7 +351,27 @@ export default function MozoView({
   };
 
   const getWaiterCartUnitPrice = (item: (typeof waiterCart)[number]) =>
-    Math.max(0, item.product.price + getWaiterCartAdjustment(item));
+    Math.max(0, item.product.price + item.modifiers.reduce((sum, modifier) => sum + modifier.extraPrice, 0) + getWaiterCartAdjustment(item));
+
+  const createOrderItemPayload = (item: (typeof waiterCart)[number], index: number) => {
+    const adjustment = getWaiterCartAdjustment(item);
+    const adjustmentValue = getWaiterCartAdjustmentValue(item);
+    const adjustmentTypeLabel = adjustment > 0 ? "Extra" : "Descuento";
+    const adjustmentValueLabel = item.adjustmentValueType === "percent" ? ` ${adjustmentValue}%` : "";
+    const customModifier: SelectedItemModifier[] = adjustment !== 0 ? [{
+      modifierId: "waiter_price_adjustment",
+      optionId: `waiter_adjustment_${Date.now()}_${index}`,
+      name: `${adjustmentTypeLabel}${adjustmentValueLabel}: ${item.adjustmentLabel.trim() || "Ajuste manual"}`,
+      extraPrice: adjustment,
+    }] : [];
+    return {
+      productId: item.product.id,
+      quantity: item.quantity,
+      notes: item.notes,
+      selectedModifiers: [...item.modifiers, ...customModifier],
+      tanda: item.product.categoryId === "c1" ? 1 : 2,
+    };
+  };
 
   // Submit new waiter added items to existing order
   const handleAddItemsToOrder = async () => {
@@ -325,55 +381,66 @@ export default function MozoView({
       return;
     }
     try {
-      const res = await fetch("/api/orders", {
-        method: "POST",
+      const isEditing = Boolean(editingOrderItemId);
+      if (isEditing && activeOrderHasPayments) {
+        showBanner("La comanda ya tiene un pago o una boleta emitida y no puede modificarse.", "error");
+        return;
+      }
+      const payloadItems = waiterCart.map(createOrderItemPayload);
+      const res = await fetch(
+        isEditing ? `/api/orders/${activeOrder.id}/items/${editingOrderItemId}` : "/api/orders",
+        {
+        method: isEditing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(isEditing ? {
+          ...payloadItems[0],
+          userId: activeUser?.id,
+          changeReason: editingOrderItemReason,
+        } : {
           tableId: selectedTable?.id,
           waiterId: activeUser?.id,
           isWaiter: true,
-          items: waiterCart.map((it, index) => {
-            const adjustment = getWaiterCartAdjustment(it);
-            const adjustmentValue = getWaiterCartAdjustmentValue(it);
-            const adjustmentTypeLabel = adjustment > 0 ? "Extra" : "Descuento";
-            const adjustmentValueLabel = it.adjustmentValueType === "percent" ? ` ${adjustmentValue}%` : "";
-            const customModifier: SelectedItemModifier[] = adjustment !== 0 ? [{
-              modifierId: "waiter_price_adjustment",
-              optionId: `waiter_adjustment_${Date.now()}_${index}`,
-              name: `${adjustmentTypeLabel}${adjustmentValueLabel}: ${it.adjustmentLabel.trim() || "Ajuste manual"}`,
-              extraPrice: adjustment,
-            }] : [];
-            return {
-            productId: it.product.id,
-            quantity: it.quantity,
-            notes: it.notes,
-            selectedModifiers: [...it.modifiers, ...customModifier],
-            tanda: it.product.categoryId === "c1" ? 1 : 2
-            };
-          })
+          items: payloadItems,
         })
       });
 
       if (res.ok) {
         setWaiterCart([]);
         setIsAddingItems(false);
-        showBanner("Productos agregados a la comanda.");
+        setEditingOrderItemId(null);
+        setEditingOrderItemReason("");
+        showBanner(isEditing ? "Ítem actualizado. Cocina recibió el cambio." : "Productos agregados a la comanda.");
         refreshStateIfNeeded();
+      } else {
+        const error = await res.json();
+        showBanner(error.error || "No se pudo guardar el cambio.", "error");
       }
     } catch (e) {
       showBanner("Error de conexión", "error");
     }
   };
 
-  const handleDeletePendingItem = async (itemId: string, removeAll = true) => {
+  const handleDeleteOrderItem = async (itemId: string, removeAll = true) => {
     if (!activeOrder || pendingOrderActionIds.includes(itemId)) return;
     const item = activeOrder.items.find((candidate) => candidate.id === itemId);
-    if (!item || item.status !== OrderItemStatus.PENDING) return;
+    if (!item) return;
+    if (activeOrderHasPayments) {
+      showBanner("La comanda ya tiene un pago o una boleta emitida y no puede modificarse.", "error");
+      return;
+    }
     const removingOne = !removeAll && item.quantity > 1;
+    const itemStage = item.status === OrderItemStatus.PENDING ? "pendiente" : item.status === OrderItemStatus.DELIVERED ? "servido" : "en preparación";
     const confirmation = removingOne
-      ? "¿Quitar una unidad de este ítem pendiente?"
-      : "¿Eliminar toda esta línea pendiente de la comanda?";
+      ? `¿Quitar una unidad de este ítem ${itemStage}? El total, cocina y stock se actualizarán.`
+      : `¿Eliminar toda esta línea (${itemStage})? El total, cocina y stock se actualizarán.`;
     if (!window.confirm(confirmation)) return;
+    const changeReason = item.status === OrderItemStatus.PENDING
+      ? "Corrección antes de enviar a cocina"
+      : window.prompt("Indica el motivo de la eliminación:", "")?.trim();
+    if (!changeReason) {
+      if (item.status !== OrderItemStatus.PENDING) showBanner("Debes indicar el motivo de la eliminación.", "error");
+      return;
+    }
 
     setPendingOrderActionIds((previous) => [...previous, itemId]);
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
@@ -391,14 +458,14 @@ export default function MozoView({
       const res = await fetch(`/api/orders/${activeOrder.id}/items/${itemId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ removeAll }),
+        body: JSON.stringify({ removeAll, userId: activeUser?.id, changeReason }),
       });
       if (!res.ok) {
         const error = await res.json();
         if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
         showBanner(error.error || "No se pudo eliminar el ítem.", "error");
       } else {
-        showBanner(removingOne ? "Se quitó una unidad pendiente." : "Ítem pendiente eliminado.");
+        showBanner(removingOne ? "Se quitó una unidad y se actualizó la comanda." : "Ítem eliminado y comanda actualizada.");
         refreshStateIfNeeded();
       }
     } catch {
@@ -1263,14 +1330,14 @@ export default function MozoView({
                               </div>
 
                               <div className="flex shrink-0 items-center gap-1">
-                                {it.status === OrderItemStatus.PENDING && (
+                                {!activeOrderHasPayments && (
                                   <>
                                     {it.quantity > 1 && (
                                       <button
                                         type="button"
-                                        title="Quitar una unidad pendiente"
+                                        title="Quitar una unidad"
                                         aria-label={`Quitar una unidad de ${prod.name}`}
-                                        onClick={() => handleDeletePendingItem(it.id, false)}
+                                        onClick={() => handleDeleteOrderItem(it.id, false)}
                                         disabled={isUpdating}
                                         className="flex h-7 w-7 items-center justify-center rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 disabled:opacity-40"
                                       >
@@ -1279,9 +1346,19 @@ export default function MozoView({
                                     )}
                                     <button
                                       type="button"
-                                      title="Eliminar toda la línea pendiente"
+                                      title="Cambiar producto, cantidad o detalles"
+                                      aria-label={`Cambiar ${prod.name}`}
+                                      onClick={() => openEditItemModal(it, prod)}
+                                      disabled={isUpdating}
+                                      className="flex h-7 w-7 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-40"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      title="Eliminar toda la línea"
                                       aria-label={`Eliminar toda la línea de ${prod.name}`}
-                                      onClick={() => handleDeletePendingItem(it.id, true)}
+                                      onClick={() => handleDeleteOrderItem(it.id, true)}
                                       disabled={isUpdating}
                                       className="flex h-7 w-7 items-center justify-center rounded-md border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40"
                                     >
@@ -1319,6 +1396,11 @@ export default function MozoView({
                       </div>
                     ) : (
                       <span className="text-zinc-400 text-xs italic block py-4 text-center">La comanda está vacía. Agrega productos.</span>
+                    )}
+                    {activeOrderHasPayments && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-900">
+                        Esta comanda ya tiene una boleta o pago. Los cambios de productos están bloqueados para proteger los montos emitidos.
+                      </div>
                     )}
                   </div>
 
@@ -1421,11 +1503,15 @@ export default function MozoView({
             >
               {/* Header */}
               <div className="p-4 border-b border-zinc-100 flex justify-between items-center bg-zinc-50">
-                <h3 className="font-bold text-zinc-900 text-sm">Catálogo de Productos - Mesa {selectedTable?.number}</h3>
+                <h3 className="font-bold text-zinc-900 text-sm">
+                  {editingOrderItemId ? "Cambiar ítem" : "Catálogo de Productos"} - Mesa {selectedTable?.number}
+                </h3>
                 <button
                   onClick={() => {
                     setIsAddingItems(false);
                     setWaiterCart([]);
+                    setEditingOrderItemId(null);
+                    setEditingOrderItemReason("");
                   }}
                   className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
                 >
@@ -1507,9 +1593,8 @@ export default function MozoView({
                               </div>
                             ) : (
                               <button
-                                onClick={() => setWaiterCart(prev => [
-                                  ...prev,
-                                  {
+                                onClick={() => setWaiterCart(prev => {
+                                  const replacement = {
                                     product: p,
                                     quantity: 1,
                                     notes: "",
@@ -1518,11 +1603,12 @@ export default function MozoView({
                                     adjustmentValueType: "amount",
                                     adjustmentAmount: 0,
                                     adjustmentLabel: "",
-                                  }
-                                ])}
+                                  };
+                                  return editingOrderItemId ? [replacement] : [...prev, replacement];
+                                })}
                                 className="bg-zinc-900 hover:bg-amber-600 text-white font-bold px-3 py-1.5 rounded-lg text-xs cursor-pointer"
                               >
-                                Agregar
+                                {editingOrderItemId ? "Elegir" : "Agregar"}
                               </button>
                             )}
                           </div>
@@ -1535,13 +1621,20 @@ export default function MozoView({
                 {/* Commanda cart panel */}
                 <div className="w-full sm:w-64 bg-zinc-50 rounded-xl border border-zinc-200 p-3.5 flex flex-col justify-between">
                   <div>
-                    <span className="font-bold text-xs text-zinc-900 block mb-3 border-b border-zinc-200 pb-1.5">Mesa {selectedTable?.number} Comanda</span>
+                    <span className="font-bold text-xs text-zinc-900 block mb-3 border-b border-zinc-200 pb-1.5">
+                      {editingOrderItemId ? "Nuevo detalle del ítem" : `Mesa ${selectedTable?.number} Comanda`}
+                    </span>
                     <div className="space-y-2 overflow-y-auto max-h-[250px]">
                       {waiterCart.map((item, index) => (
                         <div key={item.product.id} className="border-b border-zinc-200/50 pb-3 text-xs">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                             <span className="font-bold text-zinc-800">{item.quantity}x {item.product.name}</span>
+                            {item.modifiers.map((modifier) => (
+                              <span key={modifier.optionId} className="block text-[9px] text-zinc-500">
+                                {modifier.name} {modifier.extraPrice !== 0 && `(${formatSignedCLP(modifier.extraPrice)})`}
+                              </span>
+                            ))}
                             <input
                               type="text"
                               placeholder="Notas..."
@@ -1690,7 +1783,7 @@ export default function MozoView({
                       disabled={waiterCart.length === 0}
                       className="w-full bg-zinc-900 hover:bg-amber-600 disabled:opacity-50 text-white font-extrabold py-2.5 rounded-xl text-xs shadow transition-colors cursor-pointer"
                     >
-                      Confirmar Comanda
+                      {editingOrderItemId ? "Guardar Cambio" : "Confirmar Comanda"}
                     </button>
                   </div>
                 </div>

@@ -18,6 +18,7 @@ import {
 } from "./types";
 import { DEMO_STATE } from "./demoState";
 import { isDirectServiceProduct } from "./orderUtils";
+import { recalculateOrderStatus, restoreOrderItemStock } from "./orderItemMutationUtils";
 import { createTable, ensureMinimumTables } from "./tableUtils";
 import { getRemainingBalance } from "./billingUtils";
 
@@ -528,13 +529,100 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           errorMsg = "Ítem no encontrado.";
           return;
         }
-        if (item.status !== OrderItemStatus.PENDING) {
-          errorMsg = "Solo se pueden eliminar ítems que todavía están pendientes.";
+        if (s.payments.some(payment => payment.orderId === orderId)) {
+          errorMsg = "No se puede modificar una comanda que ya tiene pagos o boletas emitidas.";
           return;
         }
-        if (body.removeAll !== true && item.quantity > 1) item.quantity -= 1;
+        const changeReason = typeof body.changeReason === "string" ? body.changeReason.trim() : "";
+        if (item.status !== OrderItemStatus.PENDING && !changeReason) {
+          errorMsg = "Debes indicar el motivo para eliminar un ítem enviado o servido.";
+          return;
+        }
+        const removedQuantity = body.removeAll !== true && item.quantity > 1 ? 1 : item.quantity;
+        const product = s.products.find(candidate => candidate.id === item.productId);
+        restoreOrderItemStock(item, removedQuantity, order.id, s);
+        if (removedQuantity < item.quantity) item.quantity -= removedQuantity;
         else order.items = order.items.filter(candidate => candidate.id !== itemId);
-        order.updatedAt = new Date().toISOString();
+        const now = new Date().toISOString();
+        order.updatedAt = now;
+        recalculateOrderStatus(order);
+        const user = s.users.find(candidate => candidate.id === body.userId);
+        const table = s.tables.find(candidate => candidate.id === order.tableId);
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          userId: user?.id,
+          userName: user?.name || "Mozo",
+          action: "Ítem Eliminado",
+          details: `Mesa ${table?.number || "?"}: se eliminó ${removedQuantity}x ${product?.name || "producto"} (${item.status}). Motivo: ${changeReason || "Corrección antes de cocina"}.`,
+          createdAt: now,
+        });
+      });
+      if (errorMsg) return createResponse({ error: errorMsg }, 400);
+      return createResponse({ success: true, order: updated.orders.find(o => o.id === orderId) });
+    }
+
+    if (deleteOrderItemMatch && method === "PUT") {
+      const orderId = deleteOrderItemMatch[1];
+      const itemId = deleteOrderItemMatch[2];
+      const quantity = Number(body.quantity);
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+        return createResponse({ error: "La cantidad debe estar entre 1 y 99." }, 400);
+      }
+      let errorMsg = "";
+      const updated = await updateState(s => {
+        const order = s.orders.find(o => o.id === orderId && o.status !== OrderStatus.CLOSED);
+        if (!order) {
+          errorMsg = "Comanda activa no encontrada.";
+          return;
+        }
+        if (s.payments.some(payment => payment.orderId === orderId)) {
+          errorMsg = "No se puede modificar una comanda que ya tiene pagos o boletas emitidas.";
+          return;
+        }
+        const item = order.items.find(candidate => candidate.id === itemId);
+        const newProduct = s.products.find(candidate => candidate.id === body.productId);
+        if (!item || !newProduct) {
+          errorMsg = !item ? "Ítem no encontrado." : "Producto no encontrado.";
+          return;
+        }
+
+        const changeReason = typeof body.changeReason === "string" ? body.changeReason.trim() : "";
+        if (item.status !== OrderItemStatus.PENDING && !changeReason) {
+          errorMsg = "Debes indicar el motivo para cambiar un ítem enviado o servido.";
+          return;
+        }
+        const previousItem: OrderItem = { ...item, selectedModifiers: [...(item.selectedModifiers || [])] };
+        const previousProduct = s.products.find(candidate => candidate.id === previousItem.productId);
+        const wasPending = previousItem.status === OrderItemStatus.PENDING;
+        restoreOrderItemStock(previousItem, previousItem.quantity, order.id, s);
+
+        item.productId = newProduct.id;
+        item.quantity = quantity;
+        item.notes = typeof body.notes === "string" ? body.notes : "";
+        item.selectedModifiers = Array.isArray(body.selectedModifiers) ? body.selectedModifiers : [];
+        item.tanda = Number(body.tanda) || 1;
+        const now = new Date().toISOString();
+        if (wasPending) {
+          item.status = OrderItemStatus.PENDING;
+        } else if (isDirectServiceProduct(newProduct)) {
+          item.status = OrderItemStatus.READY;
+        } else {
+          item.status = OrderItemStatus.PREPARING;
+          deductStockForOrder({ ...order, items: [item] }, s);
+          order.kitchenSentAt = now;
+        }
+        order.updatedAt = now;
+        recalculateOrderStatus(order);
+        const user = s.users.find(candidate => candidate.id === body.userId);
+        const table = s.tables.find(candidate => candidate.id === order.tableId);
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          userId: user?.id,
+          userName: user?.name || "Mozo",
+          action: "Ítem Cambiado",
+          details: `Mesa ${table?.number || "?"}: ${previousItem.quantity}x ${previousProduct?.name || "producto"} fue cambiado por ${quantity}x ${newProduct.name}. Motivo: ${changeReason || "Corrección antes de cocina"}.`,
+          createdAt: now,
+        });
       });
       if (errorMsg) return createResponse({ error: errorMsg }, 400);
       return createResponse({ success: true, order: updated.orders.find(o => o.id === orderId) });
