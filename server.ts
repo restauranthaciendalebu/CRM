@@ -590,7 +590,11 @@ async function startServer() {
         .reduce((sum, payment) => sum + payment.amount, 0);
       const balanceBeforePayment = getRemainingBalance(billingTotal, alreadyPaid);
 
-      if (billingTotal <= 0 || payments.length === 0 || !Number.isFinite(requestedTotal) || requestedTotal <= 0) {
+      if (payments.length !== 1) {
+        errorMsg = "Cada cobro debe registrar un solo pago. Actualiza la aplicación e intenta nuevamente";
+        return;
+      }
+      if (billingTotal <= 0 || !Number.isFinite(requestedTotal) || requestedTotal <= 0) {
         errorMsg = "Ingresa un monto de pago válido";
         return;
       }

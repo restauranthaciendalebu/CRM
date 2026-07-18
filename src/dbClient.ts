@@ -779,7 +779,11 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           .reduce((sum, payment) => sum + payment.amount, 0);
         const balanceBeforePayment = getRemainingBalance(billingTotal, alreadyPaid);
 
-        if (billingTotal <= 0 || requestedPayments.length === 0 || !Number.isFinite(requestedTotal) || requestedTotal <= 0) {
+        if (requestedPayments.length !== 1) {
+          errorMsg = "Cada cobro debe registrar un solo pago. Actualiza la aplicación e intenta nuevamente";
+          return;
+        }
+        if (billingTotal <= 0 || !Number.isFinite(requestedTotal) || requestedTotal <= 0) {
           errorMsg = "Ingresa un monto de pago válido";
           return;
         }
