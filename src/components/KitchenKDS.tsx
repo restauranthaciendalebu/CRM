@@ -12,7 +12,10 @@ import {
   ChefHat, 
   UtensilsCrossed, 
   RefreshCw,
-  LogOut
+  LogOut,
+  Flame,
+  Check,
+  CheckCheck
 } from "lucide-react";
 import { isDirectServiceProduct } from "../orderUtils";
 
@@ -249,7 +252,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
   return (
     <div className="bg-zinc-950 h-screen text-white flex flex-col overflow-hidden" id="kds-root-view">
       {/* COMPACT HEADER */}
-      <div className="flex justify-between items-center px-4 py-2 border-b border-zinc-800 shrink-0">
+      <div className="flex justify-between items-center px-3 sm:px-4 py-2 border-b border-zinc-800 shrink-0">
         <div className="flex items-center gap-2">
           <ChefHat className="w-5 h-5 text-amber-500" />
           <div>
@@ -264,11 +267,12 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
         {/* CONTROLS */}
         <div className="flex items-center gap-2">
           {isScrollPaused && (
-            <span className="text-[9px] text-amber-400 font-bold animate-pulse">⏸ Scroll pausado</span>
+            <span className="text-[9px] text-amber-400 font-bold animate-pulse hidden xs:inline">⏸ Scroll pausado</span>
           )}
           <button
             onClick={onRefreshState}
             className="p-2 bg-zinc-900 border border-zinc-800 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors cursor-pointer"
+            title="Refrescar estado"
           >
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
@@ -287,10 +291,10 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
       {/* SCROLLABLE TICKETS GRID */}
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-3 py-3"
+        className="flex-1 overflow-y-auto px-2 sm:px-3 py-3"
         style={{ scrollBehavior: "auto" }}
       >
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-2.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 gap-2.5">
           {sortedOrders.map((order) => {
             const visibleItems = order.items.filter(isVisibleKitchenItem);
             const hasCookingItems = visibleItems.some((it) =>
@@ -371,52 +375,66 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
 
                       return (
                         <div key={it.id} className="border-b border-zinc-800/60 pb-1 last:border-b-0 last:pb-0">
-                          {/* Item row: quantity + name + status + action — all in one line */}
+                          {/* Item row: quantity + name + status icon + ticket action button */}
                           <div className="flex items-center gap-1.5 justify-between">
-                            <div className="flex items-center gap-1 min-w-0 flex-1">
-                              <span className="bg-amber-500 text-zinc-950 px-1.5 py-0 rounded text-[10px] font-black shrink-0 leading-relaxed">
+                            <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                              <span className="bg-amber-500 text-zinc-950 px-1.5 py-0.5 rounded text-[10px] font-black shrink-0 leading-none">
                                 {it.quantity}x
                               </span>
-                              <span className="text-[11px] font-bold text-white truncate">{prod.name}</span>
+                              <span className="text-[12px] font-extrabold text-white leading-tight truncate" title={prod.name}>
+                                {prod.name}
+                              </span>
                             </div>
-                            <div className="flex items-center gap-1.5 shrink-0">
+
+                            <div className="flex items-center gap-1 shrink-0">
+                              {/* Olla / Fuego icon for Cooking Status */}
                               {isCooking && (
-                                <span className="text-amber-300 text-[8px] uppercase font-black tracking-wider animate-pulse">
-                                  Cocinando
-                                </span>
-                              )}
-                              {it.status === OrderItemStatus.READY && (
-                                <span className="text-emerald-400 text-[8px] uppercase font-black">Listo ✔</span>
-                              )}
-                              {it.status === OrderItemStatus.DELIVERED && (
-                                <span className="text-zinc-500 text-[8px]">Servido</span>
+                                <div className="flex items-center gap-0.5 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/30 text-amber-400" title="Cocinando">
+                                  <Flame className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                                </div>
                               )}
 
-                              {/* Inline action button */}
+                              {it.status === OrderItemStatus.READY && (
+                                <div className="flex items-center gap-0.5 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-400" title="Listo">
+                                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                </div>
+                              )}
+
+                              {it.status === OrderItemStatus.DELIVERED && (
+                                <div className="flex items-center gap-0.5 bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-500" title="Servido">
+                                  <CheckCheck className="w-3.5 h-3.5 text-zinc-500" />
+                                </div>
+                              )}
+
+                              {/* Green ticket check-mark button to mark item READY */}
                               {isCooking && (
                                 <button
                                   onClick={() => handleUpdateItemStatus(order.id, it.id, OrderItemStatus.READY)}
                                   disabled={isUpdating}
-                                  className={`font-bold text-[9px] py-0.5 px-2 rounded-md border transition-colors ${
+                                  title="Marcar como listo"
+                                  className={`p-1.5 rounded-lg border transition-all flex items-center justify-center ${
                                     isUpdating 
                                       ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" 
-                                      : "bg-amber-500 hover:bg-emerald-600 text-zinc-950 hover:text-white border-amber-400 cursor-pointer"
+                                      : "bg-emerald-500 hover:bg-emerald-400 text-zinc-950 border-emerald-400 active:scale-95 cursor-pointer shadow-md shadow-emerald-950/40"
                                   }`}
                                 >
-                                  {isUpdating ? "..." : "Marcar listo"}
+                                  <Check className="w-4 h-4 stroke-[3]" />
                                 </button>
                               )}
+
+                              {/* Button to mark DELIVERED when ready */}
                               {it.status === OrderItemStatus.READY && (
                                 <button
                                   onClick={() => handleUpdateItemStatus(order.id, it.id, OrderItemStatus.DELIVERED)}
                                   disabled={isUpdating}
-                                  className={`font-bold text-[9px] py-0.5 px-2 rounded-md border transition-colors ${
+                                  title="Marcar como servido"
+                                  className={`p-1.5 rounded-lg border transition-all flex items-center justify-center ${
                                     isUpdating 
                                       ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" 
-                                      : "bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white border-zinc-700 cursor-pointer"
+                                      : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border-zinc-700 active:scale-95 cursor-pointer"
                                   }`}
                                 >
-                                  {isUpdating ? "..." : "Servido"}
+                                  <CheckCheck className="w-3.5 h-3.5" />
                                 </button>
                               )}
                             </div>
@@ -426,7 +444,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                           {it.selectedModifiers.filter((m) => m.extraPrice >= 0).length > 0 && (
                             <div className="ml-6 mt-0.5">
                               {it.selectedModifiers.filter((m) => m.extraPrice >= 0).map((m) => (
-                                <span key={m.optionId} className="text-[8px] text-zinc-500 block italic leading-tight">
+                                <span key={m.optionId} className="text-[9px] text-zinc-400 block italic leading-tight">
                                   {m.extraPrice > 0 ? "+ " : m.extraPrice < 0 ? "- " : ""}{m.name}
                                 </span>
                               ))}
@@ -435,7 +453,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
 
                           {/* Notes (compact) */}
                           {it.notes && (
-                            <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[8px] px-1.5 py-0.5 rounded block mt-0.5 ml-6 font-semibold truncate">
+                            <span className="bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[9px] px-1.5 py-0.5 rounded block mt-0.5 ml-6 font-semibold truncate">
                               📝 {it.notes}
                             </span>
                           )}
@@ -465,3 +483,4 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
     </div>
   );
 }
+
