@@ -1360,7 +1360,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
     // 13. Reservations Management
     if (path === "/api/reservations" && method === "POST") {
-      const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status, advancePayment, advancePaymentMethod } = body;
+      const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status, advancePayment, advancePaymentMethod, items } = body;
       let savedRes: any = null;
 
       await updateState(s => {
@@ -1376,6 +1376,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             r.status = status || r.status;
             if (advancePayment !== undefined) r.advancePayment = Number(advancePayment) || 0;
             if (advancePaymentMethod !== undefined) r.advancePaymentMethod = advancePaymentMethod;
+            if (items !== undefined) r.items = items;
             savedRes = r;
 
             if (r.status === ReservationStatus.ARRIVED && r.tableId) {
@@ -1389,7 +1390,11 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
                   customerCount: r.customerCount,
                   createdAt: new Date().toISOString(),
                   updatedAt: new Date().toISOString(),
-                  items: [],
+                  items: Array.isArray(r.items) ? r.items.map((it: any) => ({
+                    ...it,
+                    id: "item_" + Math.random().toString(36).substring(2, 11),
+                    status: OrderItemStatus.SENT_TO_KITCHEN
+                  })) : [],
                   customerPhone: r.customerPhone
                 };
                 s.orders.push(newOrder);
@@ -1408,7 +1413,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             notes: notes || "",
             status: status || ReservationStatus.PENDING,
             advancePayment: Number(advancePayment) || 0,
-            advancePaymentMethod: advancePaymentMethod || undefined
+            advancePaymentMethod: advancePaymentMethod || undefined,
+            items: items || []
           };
           s.reservations.push(savedRes);
 

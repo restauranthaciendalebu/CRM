@@ -209,6 +209,7 @@ export interface Reservation {
   status: ReservationStatus;
   advancePayment?: number;
   advancePaymentMethod?: PaymentMethod;
+  items?: OrderItem[];
 }
 
 export interface Shift {

@@ -154,6 +154,10 @@ export default function MozoView({
   const [resAdvance, setResAdvance] = useState(0);
   const [resAdvanceMethod, setResAdvanceMethod] = useState<PaymentMethod>(PaymentMethod.TRANSFER);
   const [isSavingReservation, setIsSavingReservation] = useState(false);
+  const [resItems, setResItems] = useState<OrderItem[]>([]);
+  const [showResItemPicker, setShowResItemPicker] = useState(false);
+  const [resItemSearch, setResItemSearch] = useState("");
+  const [resItemCategory, setResItemCategory] = useState("all");
 
 
 
@@ -331,6 +335,10 @@ export default function MozoView({
     setResNotes("");
     setResAdvance(0);
     setResAdvanceMethod(PaymentMethod.TRANSFER);
+    setResItems([]);
+    setShowResItemPicker(false);
+    setResItemSearch("");
+    setResItemCategory("all");
     setEditingReservation(null);
     setIsReservingTable(false);
   };
@@ -352,6 +360,7 @@ export default function MozoView({
       notes: resNotes.trim(),
       advancePayment: resAdvance,
       advancePaymentMethod: resAdvance > 0 ? resAdvanceMethod : undefined,
+      items: resItems,
     };
     if (editingReservation) {
       payload.id = editingReservation.id;
@@ -369,6 +378,7 @@ export default function MozoView({
             r.notes = payload.notes;
             r.advancePayment = resAdvance;
             if (resAdvance > 0) r.advancePaymentMethod = resAdvanceMethod;
+            r.items = resItems;
           }
         } else {
           const newRes: Reservation = {
@@ -382,6 +392,7 @@ export default function MozoView({
             status: ReservationStatus.PENDING,
             advancePayment: resAdvance,
             advancePaymentMethod: resAdvance > 0 ? resAdvanceMethod : undefined,
+            items: resItems,
           };
           nextState.reservations.push(newRes);
           const table = nextState.tables.find(t => t.id === selectedTable.id);
@@ -472,7 +483,11 @@ export default function MozoView({
               customerCount: r.customerCount,
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
-              items: [] as any[],
+              items: Array.isArray(r.items) ? r.items.map(it => ({
+                ...it,
+                id: "item_" + Math.random().toString(36).substring(2, 11),
+                status: OrderItemStatus.SENT_TO_KITCHEN
+              })) : [],
               customerPhone: r.customerPhone
             };
             nextState.orders.push(newOrder);
@@ -493,6 +508,7 @@ export default function MozoView({
           tableId: selectedTable.id,
           notes: reservation.notes,
           status: ReservationStatus.ARRIVED,
+          items: reservation.items || [],
         }),
       });
       if (res.ok) {
@@ -522,6 +538,7 @@ export default function MozoView({
     setResNotes(reservation.notes || "");
     setResAdvance(reservation.advancePayment || 0);
     setResAdvanceMethod(reservation.advancePaymentMethod || PaymentMethod.TRANSFER);
+    setResItems(reservation.items || []);
     setEditingReservation(reservation);
     setIsReservingTable(true);
   };
@@ -1467,6 +1484,37 @@ export default function MozoView({
                               📝 {activeReservation.notes}
                             </div>
                           )}
+                          {activeReservation.items && activeReservation.items.length > 0 && (
+                            <div className="bg-white border border-blue-200 rounded-xl p-2.5 mt-2 space-y-1.5">
+                              <span className="text-[10px] font-black text-blue-900 block uppercase flex items-center gap-1">
+                                <Utensils className="w-3 h-3 text-blue-600" /> Platos Pre-pedidos ({activeReservation.items.length})
+                              </span>
+                              <div className="space-y-1 max-h-32 overflow-y-auto">
+                                {activeReservation.items.map((it, idx) => {
+                                  const prod = state.products.find(p => p.id === it.productId);
+                                  return (
+                                    <div key={idx} className="flex justify-between items-center text-xs">
+                                      <span className="font-bold text-zinc-800">
+                                        {it.quantity}x {prod ? prod.name : "Producto"}
+                                      </span>
+                                      <span className="text-zinc-500 font-semibold">
+                                        ${((prod?.price || 0) * it.quantity).toLocaleString("es-CL")}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="border-t border-zinc-100 pt-1 flex justify-between items-center text-xs font-bold text-zinc-900">
+                                <span>Total Pre-pedido:</span>
+                                <span className="text-blue-600">
+                                  ${activeReservation.items.reduce((sum, it) => {
+                                    const prod = state.products.find(p => p.id === it.productId);
+                                    return sum + ((prod?.price || 0) * it.quantity);
+                                  }, 0).toLocaleString("es-CL")}
+                                </span>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
 
@@ -1677,6 +1725,157 @@ export default function MozoView({
                           rows={2}
                           className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
                         />
+                      </div>
+
+                      {/* Pre-ordered dishes section */}
+                      <div className="border-t border-blue-200 pt-3 space-y-2">
+                        <div className="flex justify-between items-center">
+                          <label className="text-[10px] font-black text-blue-900 uppercase flex items-center gap-1">
+                            <Utensils className="w-3.5 h-3.5 text-blue-600" /> Pre-pedido / Carta (opcional)
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowResItemPicker(!showResItemPicker)}
+                            className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-2 py-1 rounded-lg text-[10px] transition-colors flex items-center gap-1"
+                          >
+                            {showResItemPicker ? <X className="w-3 h-3" /> : <Plus className="w-3 h-3" />}
+                            {showResItemPicker ? "Cerrar Carta" : "Cargar Carta"}
+                          </button>
+                        </div>
+
+                        {/* List of pre-ordered items */}
+                        {resItems.length > 0 && (
+                          <div className="bg-white border border-blue-200 rounded-xl p-2.5 space-y-2">
+                            <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                              {resItems.map(item => {
+                                const prod = state.products.find(p => p.id === item.productId);
+                                if (!prod) return null;
+                                return (
+                                  <div key={item.productId} className="flex justify-between items-center bg-zinc-50 p-1.5 rounded-lg border border-zinc-100 text-xs">
+                                    <div className="min-w-0 flex-1 pr-2">
+                                      <span className="font-bold text-zinc-900 block truncate">{prod.name}</span>
+                                      <span className="text-[10px] text-zinc-500 font-semibold">${prod.price.toLocaleString("es-CL")} c/u</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-1 bg-white border border-zinc-200 rounded-md p-0.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setResItems(prev => prev.map(it => {
+                                              if (it.productId === item.productId) {
+                                                const nq = it.quantity - 1;
+                                                return nq > 0 ? { ...it, quantity: nq } : null;
+                                              }
+                                              return it;
+                                            }).filter(Boolean) as OrderItem[]);
+                                          }}
+                                          className="px-1.5 py-0.5 bg-zinc-100 hover:bg-zinc-200 rounded text-xs font-black text-zinc-700"
+                                        >
+                                          -
+                                        </button>
+                                        <span className="font-extrabold px-1 text-xs">{item.quantity}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setResItems(prev => prev.map(it => it.productId === item.productId ? { ...it, quantity: it.quantity + 1 } : it));
+                                          }}
+                                          className="px-1.5 py-0.5 bg-zinc-100 hover:bg-zinc-200 rounded text-xs font-black text-zinc-700"
+                                        >
+                                          +
+                                        </button>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setResItems(prev => prev.filter(it => it.productId !== item.productId))}
+                                        className="text-red-500 hover:text-red-700 p-0.5"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <div className="border-t border-zinc-100 pt-1 flex justify-between items-center text-xs font-black text-zinc-900">
+                              <span>Total Pre-pedido:</span>
+                              <span className="text-blue-600">
+                                ${resItems.reduce((sum, it) => {
+                                  const prod = state.products.find(p => p.id === it.productId);
+                                  return sum + ((prod?.price || 0) * it.quantity);
+                                }, 0).toLocaleString("es-CL")}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Product Picker from Menu */}
+                        {showResItemPicker && (
+                          <div className="bg-white border border-blue-200 rounded-xl p-2.5 space-y-2">
+                            {/* Search & Category */}
+                            <div className="flex gap-2">
+                              <div className="relative flex-1">
+                                <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                                <input
+                                  type="text"
+                                  placeholder="Buscar plato..."
+                                  value={resItemSearch}
+                                  onChange={e => setResItemSearch(e.target.value)}
+                                  className="w-full bg-zinc-50 border border-zinc-200 rounded-lg pl-8 pr-2 py-1 text-xs text-zinc-900 focus:outline-none"
+                                />
+                              </div>
+                              <select
+                                value={resItemCategory}
+                                onChange={e => setResItemCategory(e.target.value)}
+                                className="bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1 text-xs text-zinc-900 focus:outline-none"
+                              >
+                                <option value="all">Todas las cat.</option>
+                                {state.categories.map(c => (
+                                  <option key={c.id} value={c.id}>{c.name}</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Product List */}
+                            <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+                              {state.products
+                                .filter(p => p.isAvailable)
+                                .filter(p => resItemCategory === "all" || p.categoryId === resItemCategory)
+                                .filter(p => !resItemSearch || p.name.toLowerCase().includes(resItemSearch.toLowerCase()))
+                                .map(prod => {
+                                  const inCart = resItems.find(it => it.productId === prod.id);
+                                  return (
+                                    <div key={prod.id} className="flex justify-between items-center bg-zinc-50 hover:bg-blue-50 p-2 rounded-lg border border-zinc-100 text-xs transition-colors">
+                                      <div className="min-w-0 flex-1 pr-2">
+                                        <span className="font-bold text-zinc-900 block truncate">{prod.name}</span>
+                                        <span className="text-[10px] text-zinc-500 font-semibold">${prod.price.toLocaleString("es-CL")}</span>
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setResItems(prev => {
+                                            const existing = prev.find(it => it.productId === prod.id);
+                                            if (existing) {
+                                              return prev.map(it => it.productId === prod.id ? { ...it, quantity: it.quantity + 1 } : it);
+                                            }
+                                            return [...prev, {
+                                              id: "resitem_" + Math.random().toString(36).substring(2, 9),
+                                              productId: prod.id,
+                                              quantity: 1,
+                                              status: OrderItemStatus.PENDING,
+                                              selectedModifiers: []
+                                            }];
+                                          });
+                                        }}
+                                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-2 py-1 rounded-md text-[10px] transition-colors cursor-pointer shrink-0"
+                                      >
+                                        {inCart ? `+ Add (${inCart.quantity})` : "+ Agregar"}
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                            </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Submit */}

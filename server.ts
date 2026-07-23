@@ -1150,7 +1150,7 @@ async function startServer() {
 
   // 13. Reservations Management
   app.post("/api/reservations", (req, res) => {
-    const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status, advancePayment, advancePaymentMethod } = req.body;
+    const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status, advancePayment, advancePaymentMethod, items } = req.body;
     if (!customerName || !customerPhone || !customerCount || !dateTime) {
       return res.status(400).json({ error: "Nombre, teléfono, comensales y fecha/hora requeridos" });
     }
@@ -1169,6 +1169,7 @@ async function startServer() {
           r.status = status || r.status;
           if (advancePayment !== undefined) r.advancePayment = Number(advancePayment) || 0;
           if (advancePaymentMethod !== undefined) r.advancePaymentMethod = advancePaymentMethod;
+          if (items !== undefined) r.items = items;
           savedRes = r;
 
           // If status set to ARRIVED, assign table and set Table to occupied
@@ -1177,7 +1178,7 @@ async function startServer() {
             if (table) {
               table.status = TableStatus.OCCUPIED;
               
-              // Automatically open table for this arrival
+              // Automatically open table for this arrival with pre-ordered items
               const newOrder: Order = {
                 id: "o_" + Math.random().toString(36).substr(2, 9),
                 tableId: r.tableId,
@@ -1185,7 +1186,11 @@ async function startServer() {
                 customerCount: r.customerCount,
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
-                items: [],
+                items: Array.isArray(r.items) ? r.items.map((it: any) => ({
+                  ...it,
+                  id: "item_" + Math.random().toString(36).substr(2, 9),
+                  status: OrderItemStatus.SENT_TO_KITCHEN
+                })) : [],
                 customerPhone: r.customerPhone
               };
               state.orders.push(newOrder);
@@ -1204,7 +1209,8 @@ async function startServer() {
           notes: notes || "",
           status: status || ReservationStatus.PENDING,
           advancePayment: Number(advancePayment) || 0,
-          advancePaymentMethod: advancePaymentMethod || undefined
+          advancePaymentMethod: advancePaymentMethod || undefined,
+          items: items || []
         };
         state.reservations.push(savedRes);
 
