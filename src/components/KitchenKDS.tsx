@@ -20,6 +20,7 @@ import {
   ChevronRight
 } from "lucide-react";
 import { isDirectServiceProduct } from "../orderUtils";
+import { playKitchenNewOrderSound, setupAudioUnlock } from "../audioUtils";
 
 interface KitchenKDSProps {
   state: RestaurantState;
@@ -125,6 +126,29 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
     // Same priority: oldest first
     return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
   });
+
+  // Audio chime on TV / Kitchen screen when a new order arrives
+  const prevKitchenItemIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    setupAudioUnlock();
+    const currentKitchenItemIds: string[] = [];
+    filteredOrders.forEach((o) => {
+      o.items.forEach((it) => {
+        if (isVisibleKitchenItem(it)) {
+          currentKitchenItemIds.push(it.id);
+        }
+      });
+    });
+
+    const hasNewKitchenItems = currentKitchenItemIds.some(
+      (id) => !prevKitchenItemIdsRef.current.includes(id)
+    );
+
+    if (hasNewKitchenItems && prevKitchenItemIdsRef.current.length > 0) {
+      playKitchenNewOrderSound();
+    }
+    prevKitchenItemIdsRef.current = currentKitchenItemIds;
+  }, [filteredOrders]);
 
   const totalPages = Math.max(1, Math.ceil(sortedOrders.length / TABLES_PER_PAGE));
 

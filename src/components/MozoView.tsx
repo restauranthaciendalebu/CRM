@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
+import { playWaiterCallSound, setupAudioUnlock } from "../audioUtils";
 import { 
   RestaurantState, 
   User, 
@@ -179,6 +180,21 @@ export default function MozoView({
       document.body.style.overflow = previousOverflow;
     };
   }, [selectedTable]);
+
+  // Audio chime & haptic vibration when customer calls waiter or requests bill
+  const prevUnresolvedNotifIdsRef = useRef<string[]>([]);
+  useEffect(() => {
+    setupAudioUnlock();
+    const currentUnresolved = (state.notifications || [])
+      .filter(n => !n.resolved)
+      .map(n => n.id);
+
+    const hasNewNotif = currentUnresolved.some(id => !prevUnresolvedNotifIdsRef.current.includes(id));
+    if (hasNewNotif && prevUnresolvedNotifIdsRef.current.length > 0) {
+      playWaiterCallSound();
+    }
+    prevUnresolvedNotifIdsRef.current = currentUnresolved;
+  }, [state.notifications]);
 
 
   const showBanner = (text: string, type: "success" | "error" = "success") => {
