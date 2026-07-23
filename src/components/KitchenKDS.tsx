@@ -321,6 +321,13 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
         {/* CONTROLS */}
         <div className="flex items-center gap-2">
           <button
+            onClick={() => playKitchenNewOrderSound()}
+            className="px-2.5 py-1.5 bg-amber-500/20 border border-amber-500/40 hover:bg-amber-500/30 text-amber-300 font-extrabold text-[10px] rounded-lg flex items-center gap-1 cursor-pointer transition-all"
+            title="Probar sonido de cocina"
+          >
+            <ChefHat className="w-3.5 h-3.5 text-amber-400" /> Probar Sonido
+          </button>
+          <button
             onClick={onRefreshState}
             className="p-2 bg-zinc-900 border border-zinc-800 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors cursor-pointer"
             title="Refrescar estado"

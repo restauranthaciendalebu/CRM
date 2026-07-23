@@ -1186,6 +1186,13 @@ export default function MozoView({
 
           <div className="flex gap-2">
             <button
+              onClick={() => playWaiterCallSound()}
+              className="h-9 px-3 rounded-lg border border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 flex items-center gap-1.5 text-xs font-bold transition-colors cursor-pointer"
+              title="Probar sonido y vibración de alerta"
+            >
+              <Bell className="w-3.5 h-3.5 text-amber-600 animate-bounce" /> Probar Sonido
+            </button>
+            <button
               onClick={() => setIsAddTableOpen(true)}
               className="h-9 w-9 rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:border-amber-400 hover:text-amber-700 flex items-center justify-center"
               title="Agregar mesa"
