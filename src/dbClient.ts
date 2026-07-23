@@ -1368,11 +1368,11 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           const r = s.reservations.find(res => res.id === id);
           if (r) {
             r.customerName = customerName;
-            r.customerPhone = customerPhone;
-            r.customerCount = Number(customerCount);
+            r.customerPhone = customerPhone || "";
+            r.customerCount = Number(customerCount) || 1;
             r.dateTime = dateTime;
             r.tableId = tableId || r.tableId;
-            r.notes = notes;
+            r.notes = notes || "";
             r.status = status || r.status;
             if (advancePayment !== undefined) r.advancePayment = Number(advancePayment) || 0;
             if (advancePaymentMethod !== undefined) r.advancePaymentMethod = advancePaymentMethod;
@@ -1406,8 +1406,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           savedRes = {
             id: newId,
             customerName,
-            customerPhone,
-            customerCount: Number(customerCount),
+            customerPhone: customerPhone || "",
+            customerCount: Number(customerCount) || 1,
             dateTime,
             tableId: tableId || undefined,
             notes: notes || "",

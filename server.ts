@@ -1151,8 +1151,8 @@ async function startServer() {
   // 13. Reservations Management
   app.post("/api/reservations", (req, res) => {
     const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status, advancePayment, advancePaymentMethod, items } = req.body;
-    if (!customerName || !customerPhone || !customerCount || !dateTime) {
-      return res.status(400).json({ error: "Nombre, teléfono, comensales y fecha/hora requeridos" });
+    if (!customerName || !dateTime) {
+      return res.status(400).json({ error: "Nombre y fecha/hora requeridos" });
     }
 
     let savedRes: any = null;

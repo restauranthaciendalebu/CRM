@@ -345,20 +345,19 @@ export default function MozoView({
 
   const handleSaveReservation = async () => {
     if (!selectedTable) return;
-    if (!resName.trim() || !resPhone.trim() || !resDate || !resTime) {
-      showBanner("Nombre, teléfono, fecha y hora son obligatorios.", "error");
-      return;
-    }
+    const finalName = resName.trim() || `Reserva Mesa ${selectedTable.number}`;
+    const targetDate = resDate || new Date().toISOString().split("T")[0];
+    const targetTime = resTime || "20:00";
     setIsSavingReservation(true);
-    const dateTime = `${resDate}T${resTime}:00`;
+    const dateTime = `${targetDate}T${targetTime}:00`;
     const payload: any = {
-      customerName: resName.trim(),
+      customerName: finalName,
       customerPhone: resPhone.trim(),
-      customerCount: resGuests,
+      customerCount: resGuests || 1,
       dateTime,
       tableId: selectedTable.id,
       notes: resNotes.trim(),
-      advancePayment: resAdvance,
+      advancePayment: resAdvance || 0,
       advancePaymentMethod: resAdvance > 0 ? resAdvanceMethod : undefined,
       items: resItems,
     };
@@ -1632,19 +1631,19 @@ export default function MozoView({
 
                       {/* Name */}
                       <div>
-                        <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Nombre del cliente *</label>
+                        <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Nombre del cliente (opcional)</label>
                         <input
                           type="text"
                           value={resName}
                           onChange={e => setResName(e.target.value)}
-                          placeholder="Ej: Juan Pérez"
+                          placeholder="Ej: Juan Pérez (o dejar en blanco)"
                           className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
                         />
                       </div>
 
                       {/* Phone */}
                       <div>
-                        <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Teléfono *</label>
+                        <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Teléfono (opcional)</label>
                         <input
                           type="tel"
                           value={resPhone}
@@ -1657,7 +1656,7 @@ export default function MozoView({
                       {/* Date & Time */}
                       <div className="flex gap-2">
                         <div className="flex-1">
-                          <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Fecha *</label>
+                          <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Fecha</label>
                           <input
                             type="date"
                             value={resDate}
@@ -1666,7 +1665,7 @@ export default function MozoView({
                           />
                         </div>
                         <div className="flex-1">
-                          <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Hora *</label>
+                          <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Hora</label>
                           <input
                             type="time"
                             value={resTime}
