@@ -62,6 +62,17 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
   }, [onRefreshState]);
 
   // Keep current time ticked every second for exact elapsed time calculation
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
+
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
@@ -253,8 +264,8 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
           </span>
         </div>
 
-        {/* CAROUSEL / PAGE INDICATOR */}
-        {totalPages > 1 && (
+        {/* CAROUSEL / PAGE INDICATOR (Desktop/TV only) */}
+        {!isMobile && totalPages > 1 && (
           <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 px-3 py-1 rounded-xl">
             <button
               onClick={handlePrevPage}
@@ -304,10 +315,10 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
         </div>
       </div>
 
-      {/* TICKETS GRID (FORCED 3 COLUMNS SIDE-BY-SIDE IN 1 ROW, FULL SCREEN HEIGHT) */}
-      <div className="flex-1 px-3 py-2 overflow-hidden">
-        <div className="grid grid-cols-3 gap-2.5 h-full">
-          {displayedOrders.map((order) => {
+      {/* TICKETS CONTAINER (Mobile: 1 column scrollable list. TV/Desktop: 3 columns grid with pages) */}
+      <div className={`flex-1 px-3 py-2 ${isMobile ? "overflow-y-auto" : "overflow-hidden"}`}>
+        <div className={isMobile ? "flex flex-col gap-3 pb-8" : "grid grid-cols-3 gap-2.5 h-full"}>
+          {(isMobile ? sortedOrders : displayedOrders).map((order) => {
             const visibleItems = order.items.filter(isVisibleKitchenItem);
             const hasCookingItems = visibleItems.some((it) =>
               it.status === OrderItemStatus.SENT_TO_KITCHEN ||
@@ -328,7 +339,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
             return (
               <div
                 key={order.id}
-                className={`bg-zinc-900 border rounded-xl overflow-hidden flex flex-col h-full transition-all ${
+                className={`bg-zinc-900 border rounded-xl overflow-hidden flex flex-col ${isMobile ? "shrink-0 min-h-[160px]" : "h-full"} transition-all ${
                   isLate 
                     ? "border-red-500/50 ring-1 ring-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.15)] animate-pulse" 
                     : hasCookingItems
