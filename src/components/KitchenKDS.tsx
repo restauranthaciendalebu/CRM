@@ -241,14 +241,14 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
   return (
     <div className="bg-zinc-950 h-screen text-white flex flex-col overflow-hidden select-none" id="kds-root-view">
       {/* HEADER WITH PAGE CONTROLS */}
-      <div className="flex justify-between items-center px-3 sm:px-4 py-2 border-b border-zinc-800 shrink-0">
+      <div className="flex justify-between items-center px-4 py-2 border-b border-zinc-800 shrink-0">
         <div className="flex items-center gap-2">
           <ChefHat className="w-5 h-5 text-amber-500" />
           <div>
             <span className="text-[8px] text-amber-500 font-black tracking-widest uppercase block leading-none">Cocina</span>
             <h1 className="text-base font-black text-white font-sans leading-tight">KDS</h1>
           </div>
-          <span className="text-[10px] text-zinc-500 font-bold ml-2 hidden sm:inline">
+          <span className="text-[10px] text-zinc-500 font-bold ml-2">
             {sortedOrders.length} mesa{sortedOrders.length !== 1 ? "s" : ""} activa{sortedOrders.length !== 1 ? "s" : ""}
           </span>
         </div>
@@ -305,8 +305,8 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
       </div>
 
       {/* TICKETS GRID (FORCED 3 COLUMNS SIDE-BY-SIDE IN 1 ROW, FULL SCREEN HEIGHT) */}
-      <div className="flex-1 px-2 sm:px-3 py-2 overflow-hidden">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 h-full">
+      <div className="flex-1 px-3 py-2 overflow-hidden">
+        <div className="grid grid-cols-3 gap-2.5 h-full">
           {displayedOrders.map((order) => {
             const visibleItems = order.items.filter(isVisibleKitchenItem);
             const hasCookingItems = visibleItems.some((it) =>
@@ -349,14 +349,14 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                     : "bg-zinc-800/50"
                 }`}>
                   <div className="min-w-0">
-                    <h3 className="font-extrabold text-sm sm:text-base text-white leading-tight">Mesa {getTableNumber(order.tableId)}</h3>
-                    <span className="text-[8px] sm:text-[9px] text-zinc-400 font-bold block truncate">
+                    <h3 className="font-extrabold text-base text-white leading-tight">Mesa {getTableNumber(order.tableId)}</h3>
+                    <span className="text-[9px] text-zinc-400 font-bold block truncate">
                       {getWaiterName(order.waiterId)} · {order.customerCount} com.
                     </span>
                   </div>
 
                   {/* TIMER BADGE */}
-                  <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] sm:text-[11px] font-black shrink-0 ${
+                  <div className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] font-black shrink-0 ${
                     isLate
                       ? "bg-red-500/20 text-red-400 border border-red-500/30"
                       : hasCookingItems
@@ -393,7 +393,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                               <span className="bg-amber-500 text-zinc-950 px-1 py-0.5 rounded text-[10px] font-black shrink-0 leading-none">
                                 {it.quantity}x
                               </span>
-                              <span className="text-[11px] sm:text-[12px] font-extrabold text-white leading-tight break-words">
+                              <span className="text-[12px] font-extrabold text-white leading-tight break-words">
                                 {prod.name}
                               </span>
                             </div>
