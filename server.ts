@@ -1150,7 +1150,7 @@ async function startServer() {
 
   // 13. Reservations Management
   app.post("/api/reservations", (req, res) => {
-    const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status } = req.body;
+    const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status, advancePayment, advancePaymentMethod } = req.body;
     if (!customerName || !customerPhone || !customerCount || !dateTime) {
       return res.status(400).json({ error: "Nombre, teléfono, comensales y fecha/hora requeridos" });
     }
@@ -1164,9 +1164,11 @@ async function startServer() {
           r.customerPhone = customerPhone;
           r.customerCount = Number(customerCount);
           r.dateTime = dateTime;
-          r.tableId = tableId || null;
+          r.tableId = tableId || r.tableId;
           r.notes = notes;
           r.status = status || r.status;
+          if (advancePayment !== undefined) r.advancePayment = Number(advancePayment) || 0;
+          if (advancePaymentMethod !== undefined) r.advancePaymentMethod = advancePaymentMethod;
           savedRes = r;
 
           // If status set to ARRIVED, assign table and set Table to occupied
@@ -1200,13 +1202,48 @@ async function startServer() {
           dateTime,
           tableId: tableId || undefined,
           notes: notes || "",
-          status: status || ReservationStatus.PENDING
+          status: status || ReservationStatus.PENDING,
+          advancePayment: Number(advancePayment) || 0,
+          advancePaymentMethod: advancePaymentMethod || undefined
         };
         state.reservations.push(savedRes);
+
+        // Set table to RESERVED if a tableId was provided
+        if (tableId) {
+          const table = state.tables.find(t => t.id === tableId);
+          if (table && table.status === TableStatus.FREE) {
+            table.status = TableStatus.RESERVED;
+          }
+        }
       }
     });
 
     res.json({ success: true, reservation: savedRes });
+  });
+
+  // Cancel / delete a reservation
+  app.delete("/api/reservations/:id", (req, res) => {
+    const { id } = req.params;
+    let found = false;
+    LocalDb.updateState(state => {
+      const idx = state.reservations.findIndex(r => r.id === id);
+      if (idx !== -1) {
+        const reservation = state.reservations[idx];
+        // Free the table if it was reserved
+        if (reservation.tableId) {
+          const table = state.tables.find(t => t.id === reservation.tableId);
+          if (table && table.status === TableStatus.RESERVED) {
+            table.status = TableStatus.FREE;
+          }
+        }
+        reservation.status = ReservationStatus.CANCELLED;
+        found = true;
+      }
+    });
+    if (!found) {
+      return res.status(404).json({ error: "Reserva no encontrada" });
+    }
+    res.json({ success: true });
   });
 
   // Update Config: toggle Menu QR mode

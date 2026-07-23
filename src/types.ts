@@ -207,6 +207,8 @@ export interface Reservation {
   tableId?: string;
   notes?: string;
   status: ReservationStatus;
+  advancePayment?: number;
+  advancePaymentMethod?: PaymentMethod;
 }
 
 export interface Shift {

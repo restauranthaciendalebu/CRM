@@ -1360,7 +1360,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
     // 13. Reservations Management
     if (path === "/api/reservations" && method === "POST") {
-      const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status } = body;
+      const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status, advancePayment, advancePaymentMethod } = body;
       let savedRes: any = null;
 
       await updateState(s => {
@@ -1371,9 +1371,11 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             r.customerPhone = customerPhone;
             r.customerCount = Number(customerCount);
             r.dateTime = dateTime;
-            r.tableId = tableId || null;
+            r.tableId = tableId || r.tableId;
             r.notes = notes;
             r.status = status || r.status;
+            if (advancePayment !== undefined) r.advancePayment = Number(advancePayment) || 0;
+            if (advancePaymentMethod !== undefined) r.advancePaymentMethod = advancePaymentMethod;
             savedRes = r;
 
             if (r.status === ReservationStatus.ARRIVED && r.tableId) {
@@ -1404,13 +1406,49 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             dateTime,
             tableId: tableId || undefined,
             notes: notes || "",
-            status: status || ReservationStatus.PENDING
+            status: status || ReservationStatus.PENDING,
+            advancePayment: Number(advancePayment) || 0,
+            advancePaymentMethod: advancePaymentMethod || undefined
           };
           s.reservations.push(savedRes);
+
+          // Set table to RESERVED if a tableId was provided
+          if (tableId) {
+            const table = s.tables.find(t => t.id === tableId);
+            if (table && table.status === TableStatus.FREE) {
+              table.status = TableStatus.RESERVED;
+            }
+          }
         }
       });
 
       return createResponse({ success: true, reservation: savedRes });
+    }
+
+    // Cancel / delete a reservation
+    if (path.match(/^\/api\/reservations\/[^/]+$/) && method === "DELETE") {
+      const resId = path.split("/").pop()!;
+      let found = false;
+
+      await updateState(s => {
+        const idx = s.reservations.findIndex(r => r.id === resId);
+        if (idx !== -1) {
+          const reservation = s.reservations[idx];
+          if (reservation.tableId) {
+            const table = s.tables.find(t => t.id === reservation.tableId);
+            if (table && table.status === TableStatus.RESERVED) {
+              table.status = TableStatus.FREE;
+            }
+          }
+          reservation.status = ReservationStatus.CANCELLED;
+          found = true;
+        }
+      });
+
+      if (!found) {
+        return createResponse({ error: "Reserva no encontrada" }, 404);
+      }
+      return createResponse({ success: true });
     }
 
     // Update Config QR Mode

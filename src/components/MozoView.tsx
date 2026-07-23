@@ -10,7 +10,9 @@ import {
   PaymentMethod,
   Payment,
   OrderItem,
-  SelectedItemModifier
+  SelectedItemModifier,
+  Reservation,
+  ReservationStatus
 } from "../types";
 import { 
   Grid, 
@@ -34,7 +36,11 @@ import {
   ReceiptText,
   Trash2,
   Minus,
-  Pencil
+  Pencil,
+  CalendarDays,
+  Phone,
+  BookOpen,
+  UserPlus
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { printThermalReceipt } from "./ThermalReceipt";
@@ -135,6 +141,20 @@ export default function MozoView({
 
   // Error/Success banner
   const [bannerMsg, setBannerMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
+
+  // Reservation state
+  const [isReservingTable, setIsReservingTable] = useState(false);
+  const [editingReservation, setEditingReservation] = useState<Reservation | null>(null);
+  const [resName, setResName] = useState("");
+  const [resPhone, setResPhone] = useState("");
+  const [resDate, setResDate] = useState("");
+  const [resTime, setResTime] = useState("");
+  const [resGuests, setResGuests] = useState(2);
+  const [resNotes, setResNotes] = useState("");
+  const [resAdvance, setResAdvance] = useState(0);
+  const [resAdvanceMethod, setResAdvanceMethod] = useState<PaymentMethod>(PaymentMethod.TRANSFER);
+  const [isSavingReservation, setIsSavingReservation] = useState(false);
+
 
 
   // State is updated in real-time via Firestore onSnapshot in App.tsx
@@ -299,6 +319,211 @@ export default function MozoView({
     } catch (e) {
       showBanner("Error al conectar con el servidor", "error");
     }
+  };
+
+  // ---- RESERVATION HANDLERS ----
+  const resetReservationForm = () => {
+    setResName("");
+    setResPhone("");
+    setResDate("");
+    setResTime("");
+    setResGuests(2);
+    setResNotes("");
+    setResAdvance(0);
+    setResAdvanceMethod(PaymentMethod.TRANSFER);
+    setEditingReservation(null);
+    setIsReservingTable(false);
+  };
+
+  const handleSaveReservation = async () => {
+    if (!selectedTable) return;
+    if (!resName.trim() || !resPhone.trim() || !resDate || !resTime) {
+      showBanner("Nombre, teléfono, fecha y hora son obligatorios.", "error");
+      return;
+    }
+    setIsSavingReservation(true);
+    const dateTime = `${resDate}T${resTime}:00`;
+    const payload: any = {
+      customerName: resName.trim(),
+      customerPhone: resPhone.trim(),
+      customerCount: resGuests,
+      dateTime,
+      tableId: selectedTable.id,
+      notes: resNotes.trim(),
+      advancePayment: resAdvance,
+      advancePaymentMethod: resAdvance > 0 ? resAdvanceMethod : undefined,
+    };
+    if (editingReservation) {
+      payload.id = editingReservation.id;
+    }
+
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        if (editingReservation) {
+          const r = nextState.reservations.find(res => res.id === editingReservation.id);
+          if (r) {
+            r.customerName = payload.customerName;
+            r.customerPhone = payload.customerPhone;
+            r.customerCount = payload.customerCount;
+            r.dateTime = dateTime;
+            r.notes = payload.notes;
+            r.advancePayment = resAdvance;
+            if (resAdvance > 0) r.advancePaymentMethod = resAdvanceMethod;
+          }
+        } else {
+          const newRes: Reservation = {
+            id: "res_" + Math.random().toString(36).substring(2, 11),
+            customerName: payload.customerName,
+            customerPhone: payload.customerPhone,
+            customerCount: payload.customerCount,
+            dateTime,
+            tableId: selectedTable.id,
+            notes: payload.notes,
+            status: ReservationStatus.PENDING,
+            advancePayment: resAdvance,
+            advancePaymentMethod: resAdvance > 0 ? resAdvanceMethod : undefined,
+          };
+          nextState.reservations.push(newRes);
+          const table = nextState.tables.find(t => t.id === selectedTable.id);
+          if (table) table.status = TableStatus.RESERVED;
+        }
+      });
+    }
+
+    try {
+      const res = await fetch("/api/reservations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        showBanner(editingReservation ? "Reserva actualizada." : "Reserva creada con éxito.");
+        resetReservationForm();
+        refreshStateIfNeeded();
+        // Update local table to show RESERVED immediately
+        if (!editingReservation) {
+          const updatedTbl = state.tables.find(t => t.id === selectedTable.id);
+          if (updatedTbl) {
+            updatedTbl.status = TableStatus.RESERVED;
+            setSelectedTable({ ...updatedTbl });
+          }
+        }
+      } else {
+        showBanner("Error al guardar la reserva.", "error");
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+      }
+    } catch (e) {
+      showBanner("Error de conexión al guardar reserva.", "error");
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+    } finally {
+      setIsSavingReservation(false);
+    }
+  };
+
+  const handleCancelReservation = async (reservationId: string) => {
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        const r = nextState.reservations.find(res => res.id === reservationId);
+        if (r) {
+          if (r.tableId) {
+            const table = nextState.tables.find(t => t.id === r.tableId);
+            if (table && table.status === TableStatus.RESERVED) table.status = TableStatus.FREE;
+          }
+          r.status = ReservationStatus.CANCELLED;
+        }
+      });
+    }
+    try {
+      const res = await fetch(`/api/reservations/${reservationId}`, { method: "DELETE" });
+      if (res.ok) {
+        showBanner("Reserva cancelada.");
+        refreshStateIfNeeded();
+        if (selectedTable) {
+          const updatedTbl = state.tables.find(t => t.id === selectedTable.id);
+          if (updatedTbl) {
+            updatedTbl.status = TableStatus.FREE;
+            setSelectedTable({ ...updatedTbl });
+          }
+        }
+      } else {
+        showBanner("Error al cancelar reserva.", "error");
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+      }
+    } catch (e) {
+      showBanner("Error de conexión.", "error");
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+    }
+  };
+
+  const handleArriveReservation = async (reservation: Reservation) => {
+    if (!selectedTable) return;
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        const r = nextState.reservations.find(res => res.id === reservation.id);
+        if (r) {
+          r.status = ReservationStatus.ARRIVED;
+          const table = nextState.tables.find(t => t.id === selectedTable.id);
+          if (table) {
+            table.status = TableStatus.OCCUPIED;
+            const newOrder = {
+              id: "o_" + Math.random().toString(36).substring(2, 11),
+              tableId: selectedTable.id,
+              status: OrderStatus.PREPARING,
+              customerCount: r.customerCount,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              items: [] as any[],
+              customerPhone: r.customerPhone
+            };
+            nextState.orders.push(newOrder);
+          }
+        }
+      });
+    }
+    try {
+      const res = await fetch("/api/reservations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: reservation.id,
+          customerName: reservation.customerName,
+          customerPhone: reservation.customerPhone,
+          customerCount: reservation.customerCount,
+          dateTime: reservation.dateTime,
+          tableId: selectedTable.id,
+          notes: reservation.notes,
+          status: ReservationStatus.ARRIVED,
+        }),
+      });
+      if (res.ok) {
+        showBanner(`¡${reservation.customerName} ha llegado! Mesa abierta.`);
+        refreshStateIfNeeded();
+        const updatedTbl = state.tables.find(t => t.id === selectedTable.id);
+        if (updatedTbl) {
+          updatedTbl.status = TableStatus.OCCUPIED;
+          setSelectedTable({ ...updatedTbl });
+        }
+      }
+    } catch (e) {
+      showBanner("Error al registrar llegada.", "error");
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+    }
+  };
+
+  const openEditReservation = (reservation: Reservation) => {
+    setResName(reservation.customerName);
+    setResPhone(reservation.customerPhone);
+    const dt = new Date(reservation.dateTime);
+    setResDate(reservation.dateTime.split("T")[0]);
+    const h = dt.getHours().toString().padStart(2, "0");
+    const m = dt.getMinutes().toString().padStart(2, "0");
+    setResTime(`${h}:${m}`);
+    setResGuests(reservation.customerCount);
+    setResNotes(reservation.notes || "");
+    setResAdvance(reservation.advancePayment || 0);
+    setResAdvanceMethod(reservation.advancePaymentMethod || PaymentMethod.TRANSFER);
+    setEditingReservation(reservation);
+    setIsReservingTable(true);
   };
 
   const handleUpdateGuestCount = async (nextCount: number) => {
@@ -1068,6 +1293,11 @@ export default function MozoView({
             // Count active items
             const itemCount = tableOrder ? tableOrder.items.length : 0;
 
+            // Find active reservation for this table
+            const tableReservation = tbl.status === TableStatus.RESERVED
+              ? state.reservations.find(r => r.tableId === tbl.id && r.status !== ReservationStatus.CANCELLED && r.status !== ReservationStatus.ARRIVED)
+              : null;
+
             // Determine background and text based on status
             let statusBg = "bg-white border-zinc-200 text-zinc-800 hover:bg-zinc-50";
             let statusText = "Libre";
@@ -1101,6 +1331,8 @@ export default function MozoView({
                 onClick={() => {
                   setSelectedTable(tbl);
                   setIsOpeningTable(false);
+                  setIsReservingTable(false);
+                  resetReservationForm();
                   if (tbl.status === TableStatus.FREE) setOpeningGuestCount(2);
                 }}
                 className={`border-2 rounded-2xl p-3.5 flex flex-col justify-between items-start text-left transition-all min-h-[130px] relative cursor-pointer ${
@@ -1138,6 +1370,12 @@ export default function MozoView({
                     <span className="text-[10px] text-zinc-400 font-semibold mt-1 block truncate">
                       👤 {assignedWaiter.name.replace(/ \(.*\)/, "")}
                     </span>
+                  )}
+                  {tableReservation && (
+                    <div className="mt-1.5 bg-blue-100 text-blue-800 rounded-lg px-2 py-1">
+                      <span className="text-[10px] font-bold block truncate">📅 {new Date(tableReservation.dateTime).toLocaleDateString("es-CL", { day: "2-digit", month: "short" })} {new Date(tableReservation.dateTime).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}</span>
+                      <span className="text-[9px] font-semibold block truncate">👤 {tableReservation.customerName}</span>
+                    </div>
                   )}
                 </div>
               </motion.button>
@@ -1181,65 +1419,279 @@ export default function MozoView({
             </div>
 
             {/* STATUS CARDS */}
-            {selectedTable.status === TableStatus.FREE ? (
-              <div className="space-y-4 py-4 text-center">
-                <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="w-6 h-6" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-zinc-950 text-sm">Mesa Disponible</h3>
-                  <p className="text-xs text-zinc-400 mt-1">La mesa está vacía. Ábrela para empezar a tomar pedidos.</p>
-                </div>
-                <button
-                  onClick={() => {
-                    if (!activeShift) {
-                      showBanner("Debes abrir la caja / turno de trabajo primero.", "error");
-                      return;
-                    }
-                    setOpeningGuestCount(2);
-                    setIsOpeningTable(true);
-                  }}
-                  className="w-full bg-zinc-950 hover:bg-amber-600 text-white font-bold py-3 px-4 rounded-xl text-xs shadow-md transition-colors cursor-pointer"
-                >
-                  Abrir Mesa / Comensales
-                </button>
+            {selectedTable.status === TableStatus.FREE || selectedTable.status === TableStatus.RESERVED ? (() => {
+              const activeReservation = selectedTable.status === TableStatus.RESERVED
+                ? state.reservations.find(r => r.tableId === selectedTable.id && r.status !== ReservationStatus.CANCELLED && r.status !== ReservationStatus.ARRIVED)
+                : null;
 
-                {/* Opening Table Panel inside details */}
-                {isOpeningTable && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 mt-3 text-left space-y-3"
-                  >
-                    <span className="font-bold text-xs text-zinc-900 block">Configurar Mesa</span>
-                    <div>
-                      <label className="text-[10px] font-black text-zinc-400 block uppercase">Cantidad de comensales</label>
-                      <div className="flex items-center gap-3 mt-1 bg-white p-1 rounded-lg border border-zinc-200 w-max">
+              return (
+                <div className="space-y-3 py-4 flex-1 overflow-y-auto">
+                  {/* ======== RESERVED: Show reservation details ======== */}
+                  {selectedTable.status === TableStatus.RESERVED && activeReservation ? (
+                    <div className="space-y-3">
+                      <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-2.5">
+                        <div className="flex items-center gap-2">
+                          <BookOpen className="w-5 h-5 text-blue-600" />
+                          <h3 className="font-black text-blue-900 text-sm">Reserva Activa</h3>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2 text-xs">
+                            <CalendarDays className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <span className="font-bold text-zinc-800">
+                              {new Date(activeReservation.dateTime).toLocaleDateString("es-CL", { weekday: "short", day: "2-digit", month: "short" })}{" "}
+                              {new Date(activeReservation.dateTime).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <UserPlus className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <span className="font-bold text-zinc-800">{activeReservation.customerName}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <Phone className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <span className="font-semibold text-zinc-600">{activeReservation.customerPhone}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <Users className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                            <span className="font-semibold text-zinc-600">{activeReservation.customerCount} comensales</span>
+                          </div>
+                          {activeReservation.advancePayment && activeReservation.advancePayment > 0 ? (
+                            <div className="flex items-center gap-2 text-xs">
+                              <DollarSign className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                              <span className="font-bold text-emerald-700">
+                                Abono: ${activeReservation.advancePayment.toLocaleString("es-CL")} ({activeReservation.advancePaymentMethod || "Transferencia"})
+                              </span>
+                            </div>
+                          ) : null}
+                          {activeReservation.notes && (
+                            <div className="text-[11px] text-zinc-500 italic mt-1 bg-white rounded-lg p-2 border border-zinc-100">
+                              📝 {activeReservation.notes}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Actions for RESERVED table */}
+                      <button
+                        onClick={() => handleArriveReservation(activeReservation)}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 px-4 rounded-xl text-xs shadow-md transition-colors cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <CheckCircle2 className="w-4 h-4" /> Llegó el cliente — Abrir Mesa
+                      </button>
+                      <div className="flex gap-2">
                         <button
-                          onClick={() => setOpeningGuestCount(q => Math.max(1, q - 1))}
-                          className="bg-zinc-100 p-1 rounded hover:bg-zinc-200"
+                          onClick={() => openEditReservation(activeReservation)}
+                          className="flex-1 bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1"
                         >
-                          -
+                          <Pencil className="w-3.5 h-3.5" /> Editar
                         </button>
-                        <span className="font-extrabold text-sm px-2 text-zinc-900">{openingGuestCount}</span>
                         <button
-                          onClick={() => setOpeningGuestCount(q => q + 1)}
-                          className="bg-zinc-100 p-1 rounded hover:bg-zinc-200"
+                          onClick={() => handleCancelReservation(activeReservation.id)}
+                          className="flex-1 bg-red-50 hover:bg-red-100 text-red-700 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1"
                         >
-                          +
+                          <Trash2 className="w-3.5 h-3.5" /> Cancelar Reserva
                         </button>
                       </div>
                     </div>
-                    <button
-                      onClick={handleOpenTableSubmit}
-                      className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-950 font-black py-2.5 rounded-xl text-xs transition-colors"
+                  ) : (
+                    /* ======== FREE: Open or Reserve ======== */
+                    <div className="space-y-3 text-center">
+                      <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-500 flex items-center justify-center mx-auto">
+                        <CheckCircle2 className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-zinc-950 text-sm">Mesa Disponible</h3>
+                        <p className="text-xs text-zinc-400 mt-1">Ábrela para tomar pedidos o resérvala para un cliente.</p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          if (!activeShift) {
+                            showBanner("Debes abrir la caja / turno de trabajo primero.", "error");
+                            return;
+                          }
+                          setOpeningGuestCount(2);
+                          setIsOpeningTable(true);
+                          setIsReservingTable(false);
+                        }}
+                        className="w-full bg-zinc-950 hover:bg-amber-600 text-white font-bold py-3 px-4 rounded-xl text-xs shadow-md transition-colors cursor-pointer"
+                      >
+                        Abrir Mesa / Comensales
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsReservingTable(true);
+                          setIsOpeningTable(false);
+                          // Default date to today
+                          if (!resDate) setResDate(new Date().toISOString().split("T")[0]);
+                          if (!resTime) setResTime("20:00");
+                        }}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl text-xs shadow-md transition-colors cursor-pointer flex items-center justify-center gap-2"
+                      >
+                        <BookOpen className="w-4 h-4" /> Reservar Mesa
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Opening Table Panel (inside details) */}
+                  {isOpeningTable && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 mt-1 text-left space-y-3"
                     >
-                      Abrir Mesa Ahora
-                    </button>
-                  </motion.div>
-                )}
-              </div>
-            ) : (
+                      <span className="font-bold text-xs text-zinc-900 block">Configurar Mesa</span>
+                      <div>
+                        <label className="text-[10px] font-black text-zinc-400 block uppercase">Cantidad de comensales</label>
+                        <div className="flex items-center gap-3 mt-1 bg-white p-1 rounded-lg border border-zinc-200 w-max">
+                          <button
+                            onClick={() => setOpeningGuestCount(q => Math.max(1, q - 1))}
+                            className="bg-zinc-100 p-1 rounded hover:bg-zinc-200"
+                          >
+                            -
+                          </button>
+                          <span className="font-extrabold text-sm px-2 text-zinc-900">{openingGuestCount}</span>
+                          <button
+                            onClick={() => setOpeningGuestCount(q => q + 1)}
+                            className="bg-zinc-100 p-1 rounded hover:bg-zinc-200"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                      <button
+                        onClick={handleOpenTableSubmit}
+                        className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-950 font-black py-2.5 rounded-xl text-xs transition-colors"
+                      >
+                        Abrir Mesa Ahora
+                      </button>
+                    </motion.div>
+                  )}
+
+                  {/* ======== RESERVATION FORM ======== */}
+                  {isReservingTable && (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="bg-blue-50 border border-blue-200 rounded-2xl p-4 mt-1 text-left space-y-3"
+                    >
+                      <div className="flex justify-between items-center">
+                        <span className="font-black text-xs text-blue-900 flex items-center gap-1.5">
+                          <BookOpen className="w-4 h-4" /> {editingReservation ? "Editar Reserva" : "Nueva Reserva"}
+                        </span>
+                        <button onClick={resetReservationForm} className="text-zinc-400 hover:text-zinc-600">
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Name */}
+                      <div>
+                        <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Nombre del cliente *</label>
+                        <input
+                          type="text"
+                          value={resName}
+                          onChange={e => setResName(e.target.value)}
+                          placeholder="Ej: Juan Pérez"
+                          className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                      </div>
+
+                      {/* Phone */}
+                      <div>
+                        <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Teléfono *</label>
+                        <input
+                          type="tel"
+                          value={resPhone}
+                          onChange={e => setResPhone(e.target.value)}
+                          placeholder="Ej: +56 9 1234 5678"
+                          className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                      </div>
+
+                      {/* Date & Time */}
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Fecha *</label>
+                          <input
+                            type="date"
+                            value={resDate}
+                            onChange={e => setResDate(e.target.value)}
+                            className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                        </div>
+                        <div className="flex-1">
+                          <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Hora *</label>
+                          <input
+                            type="time"
+                            value={resTime}
+                            onChange={e => setResTime(e.target.value)}
+                            className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Guest count */}
+                      <div>
+                        <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Comensales</label>
+                        <div className="flex items-center gap-3 bg-white p-1 rounded-lg border border-zinc-200 w-max">
+                          <button onClick={() => setResGuests(g => Math.max(1, g - 1))} className="bg-zinc-100 p-1 rounded hover:bg-zinc-200 text-zinc-700 font-bold">-</button>
+                          <span className="font-extrabold text-sm px-2 text-zinc-900">{resGuests}</span>
+                          <button onClick={() => setResGuests(g => g + 1)} className="bg-zinc-100 p-1 rounded hover:bg-zinc-200 text-zinc-700 font-bold">+</button>
+                        </div>
+                      </div>
+
+                      {/* Advance payment */}
+                      <div>
+                        <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Abono / Pago anticipado (opcional)</label>
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-bold">$</span>
+                            <input
+                              type="number"
+                              value={resAdvance || ""}
+                              onChange={e => setResAdvance(Number(e.target.value) || 0)}
+                              placeholder="0"
+                              className="w-full bg-white border border-zinc-200 rounded-lg pl-7 pr-3 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                          </div>
+                          {resAdvance > 0 && (
+                            <select
+                              value={resAdvanceMethod}
+                              onChange={e => setResAdvanceMethod(e.target.value as PaymentMethod)}
+                              className="bg-white border border-zinc-200 rounded-lg px-2 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            >
+                              <option value={PaymentMethod.TRANSFER}>Transferencia</option>
+                              <option value={PaymentMethod.CASH}>Efectivo</option>
+                              <option value={PaymentMethod.DEBIT}>Débito</option>
+                              <option value={PaymentMethod.CREDIT}>Crédito</option>
+                            </select>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Notes */}
+                      <div>
+                        <label className="text-[10px] font-black text-zinc-500 block uppercase mb-1">Notas (opcional)</label>
+                        <textarea
+                          value={resNotes}
+                          onChange={e => setResNotes(e.target.value)}
+                          placeholder="Ej: Cumpleaños, alergia a mariscos..."
+                          rows={2}
+                          className="w-full bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+                        />
+                      </div>
+
+                      {/* Submit */}
+                      <button
+                        onClick={handleSaveReservation}
+                        disabled={isSavingReservation}
+                        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-black py-2.5 rounded-xl text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                      >
+                        {isSavingReservation ? "Guardando..." : editingReservation ? "Actualizar Reserva" : "Confirmar Reserva"}
+                      </button>
+                    </motion.div>
+                  )}
+                </div>
+              );
+            })() : (
               /* OCCUPIED DETAILS PANEL */
               <div className="flex-1 flex flex-col justify-between">
                 <div>
