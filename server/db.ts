@@ -334,19 +334,43 @@ export class LocalDb {
       return this.cloneState(this.stateCache);
     }
 
+    const backupDir = path.join(path.dirname(DB_FILE), "backups");
+    const backupFile = path.join(backupDir, "restaurant_db_backup.json");
+
     try {
-      if (!fs.existsSync(DB_FILE)) {
-        this.saveState(initialData);
-        return this.cloneState(initialData);
+      if (fs.existsSync(DB_FILE)) {
+        const raw = fs.readFileSync(DB_FILE, "utf-8");
+        if (raw.trim()) {
+          const parsed = JSON.parse(raw) as RestaurantState;
+          return this.normalizeState(parsed);
+        }
       }
-      const raw = fs.readFileSync(DB_FILE, "utf-8");
-      if (!raw.trim()) {
-        return this.cloneState(initialData);
+
+      // Try restoring from safety backup file if primary file is corrupted or empty
+      if (fs.existsSync(backupFile)) {
+        const rawBackup = fs.readFileSync(backupFile, "utf-8");
+        if (rawBackup.trim()) {
+          console.warn("Restoring database state from safety backup file...");
+          const parsedBackup = JSON.parse(rawBackup) as RestaurantState;
+          return this.normalizeState(parsedBackup);
+        }
       }
-      const parsed = JSON.parse(raw) as RestaurantState;
-      return this.normalizeState(parsed);
+
+      // Only use initial data if NO database file or backup exists at all
+      console.log("No existing database file found. Initializing new state...");
+      return this.cloneState(initialData);
     } catch (e) {
-      console.error("Error loading restaurant DB, using initial data:", e);
+      console.error("Error loading primary DB file, trying backup:", e);
+      if (fs.existsSync(backupFile)) {
+        try {
+          const rawBackup = fs.readFileSync(backupFile, "utf-8");
+          if (rawBackup.trim()) {
+            return this.normalizeState(JSON.parse(rawBackup) as RestaurantState);
+          }
+        } catch (backupErr) {
+          console.error("Failed to load backup file as well:", backupErr);
+        }
+      }
       return this.cloneState(initialData);
     }
   }
@@ -362,7 +386,21 @@ export class LocalDb {
     }
 
     try {
-      fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), "utf-8");
+      const dbDir = path.dirname(DB_FILE);
+      const backupDir = path.join(dbDir, "backups");
+      if (!fs.existsSync(backupDir)) {
+        fs.mkdirSync(backupDir, { recursive: true });
+      }
+
+      // Save atomic via temp file to avoid file truncation/corruption on crash
+      const tempFile = DB_FILE + ".tmp";
+      const jsonContent = JSON.stringify(state, null, 2);
+      fs.writeFileSync(tempFile, jsonContent, "utf-8");
+      fs.renameSync(tempFile, DB_FILE);
+
+      // Maintain a safety backup file
+      const backupFile = path.join(backupDir, "restaurant_db_backup.json");
+      fs.writeFileSync(backupFile, jsonContent, "utf-8");
     } catch (e) {
       console.error("Error saving restaurant DB:", e);
     }
