@@ -725,15 +725,76 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     return minCookable === Infinity ? "0" : minCookable.toString() + " raciones";
   };
 
+  const exportSalesCSV = () => {
+    const payments = state.payments || [];
+    if (payments.length === 0) {
+      alert("No hay boletas registradas para exportar.");
+      return;
+    }
+    const headers = ["ID Boleta", "ID Orden", "Mesa", "Monto Total ($)", "Método de Pago", "Propina ($)", "Descuento ($)", "Fecha"];
+    const rows = payments.map((p) => {
+      const order = state.orders?.find((o) => o.id === p.orderId);
+      const tableNumber = order ? order.tableNumber : "-";
+      return [
+        `"${p.id}"`,
+        `"${p.orderId || '-'}"`,
+        `"${tableNumber}"`,
+        p.amount || 0,
+        `"${p.method || '-'}"`,
+        p.tip || 0,
+        p.discount || 0,
+        `"${new Date(p.createdAt).toLocaleString('es-CL')}"`
+      ].join(",");
+    });
+
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `reporte_ventas_hacienda_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="bg-zinc-50 min-h-screen text-zinc-800" id="admin-root-view">
       {/* Banner de Bienvenida */}
-      <div className="bg-zinc-900 text-white p-6 border-b border-zinc-800">
-        <span className="text-[10px] text-amber-500 uppercase tracking-widest font-black block">Consola Administrativa</span>
-        <h1 className="text-xl font-extrabold flex items-center gap-2">
-          CRM & Control de Negocio - Hacienda
-        </h1>
-        <p className="text-xs text-zinc-400 mt-1">Visibilidad total de inventarios, recetas, fidelidad de clientes y reportes analíticos.</p>
+      <div className="bg-zinc-900 text-white p-6 border-b border-zinc-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <span className="text-[10px] text-amber-500 uppercase tracking-widest font-black block">Consola Administrativa</span>
+          <h1 className="text-xl font-extrabold flex items-center gap-2">
+            CRM & Control de Negocio - Hacienda
+          </h1>
+          <p className="text-xs text-zinc-400 mt-1">Visibilidad total de inventarios, recetas, fidelidad de clientes y reportes analíticos.</p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={() => {
+              const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
+              const downloadAnchor = document.createElement('a');
+              downloadAnchor.setAttribute("href", dataStr);
+              downloadAnchor.setAttribute("download", `hacienda_db_backup_${new Date().toISOString().split('T')[0]}.json`);
+              document.body.appendChild(downloadAnchor);
+              downloadAnchor.click();
+              downloadAnchor.remove();
+            }}
+            className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-black text-xs rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer transition-all"
+            title="Descargar copia de seguridad completa del sistema"
+          >
+            <Download className="w-4 h-4" /> Respaldo Completo (JSON)
+          </button>
+
+          <button
+            onClick={exportSalesCSV}
+            className="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 border border-zinc-700 cursor-pointer transition-all"
+            title="Exportar reporte de ventas y boletas a Excel/CSV"
+          >
+            <FileDown className="w-4 h-4 text-emerald-400" /> Exportar Ventas (Excel)
+          </button>
+        </div>
       </div>
 
       {/* ADMIN SECTION SUB-TABS */}
