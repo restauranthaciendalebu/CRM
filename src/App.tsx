@@ -1,18 +1,18 @@
-import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { RestaurantState, User } from "./types";
 import { themes } from "./theme";
 import { subscribeToState } from "./stateClient";
 import { useOnlineStatus } from "./offlineSync";
 
-const RoleSelector = lazy(() => import("./components/RoleSelector"));
-const ClienteView = lazy(() => import("./components/ClienteView"));
-const MozoView = lazy(() => import("./components/MozoView"));
-const KitchenKDS = lazy(() => import("./components/KitchenKDS"));
-const AdminView = lazy(() => import("./components/AdminView"));
-const AdminLogin = lazy(() => import("./components/AdminLogin"));
-const CustomerQRView = lazy(() => import("./components/CustomerQRView"));
-const ThemeCarousel = lazy(() => import("./components/ThemeCarousel"));
-const LoginView = lazy(() => import("./components/LoginView"));
+import RoleSelector from "./components/RoleSelector";
+import ClienteView from "./components/ClienteView";
+import MozoView from "./components/MozoView";
+import KitchenKDS from "./components/KitchenKDS";
+import AdminView from "./components/AdminView";
+import AdminLogin from "./components/AdminLogin";
+import CustomerQRView from "./components/CustomerQRView";
+import ThemeCarousel from "./components/ThemeCarousel";
+import LoginView from "./components/LoginView";
 
 function getQRTableNumber(): number | null {
   const params = new URLSearchParams(window.location.search);
@@ -51,7 +51,7 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode }, { 
         <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center p-6 text-center">
           <h2 className="text-xl font-bold">No se pudo cargar esta pantalla</h2>
           <p className="text-zinc-400 text-sm mt-2">Actualiza la aplicación para continuar.</p>
-          <button onClick={() => window.location.reload()} className="mt-5 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-zinc-950">
+          <button onClick={() => window.location.reload()} className="mt-5 rounded-xl bg-amber-500 px-5 py-3 text-sm font-bold text-zinc-950 cursor-pointer">
             Actualizar
           </button>
         </div>
@@ -95,17 +95,15 @@ function AppContent() {
       if (res.ok) {
         const data = await res.json();
         setState(data);
-        setIsDemoMode(false);
       }
     } catch {
-      // Snapshot listener owns connection errors for now.
+      // Offline or direct firestore listener handles synchronization
     }
   };
 
   useEffect(() => {
     const unsubscribe = subscribeToState((newState) => {
       setState(newState);
-      setIsDemoMode(false);
       setIsLoading(false);
     });
 
@@ -143,24 +141,20 @@ function AppContent() {
 
   if (qrTableNumber !== null) {
     return (
-      <Suspense fallback={<LoadingScreen />}>
-        <CustomerQRView
-          state={state}
-          tableNumber={qrTableNumber}
-          onRefreshState={fetchState}
-        />
-      </Suspense>
+      <CustomerQRView
+        state={state}
+        tableNumber={qrTableNumber}
+        onRefreshState={fetchState}
+      />
     );
   }
 
   if (!activeUser) {
     return (
-      <Suspense fallback={<LoadingScreen />}>
-        <LoginView
-          state={state}
-          onLoginSuccess={handleLoginSuccess}
-        />
-      </Suspense>
+      <LoginView
+        state={state}
+        onLoginSuccess={handleLoginSuccess}
+      />
     );
   }
 
@@ -173,74 +167,72 @@ function AppContent() {
         </div>
       )}
 
-      <Suspense fallback={<LoadingScreen />}>
-        {activeUser.role === "ADMIN" && (
-          <RoleSelector
-            currentRole={currentRole}
-            onChangeRole={setCurrentRole}
-            activeTableIdForClient={clientTableId}
-            onChangeClientTable={setClientTableId}
-            tables={state.tables}
-            activeUser={activeUser}
-            onLogout={handleLogout}
-            showThemeExplorer={showThemeExplorer}
-            onToggleThemeExplorer={() => setShowThemeExplorer((prev) => !prev)}
+      {activeUser.role === "ADMIN" && (
+        <RoleSelector
+          currentRole={currentRole}
+          onChangeRole={setCurrentRole}
+          activeTableIdForClient={clientTableId}
+          onChangeClientTable={setClientTableId}
+          tables={state.tables}
+          activeUser={activeUser}
+          onLogout={handleLogout}
+          showThemeExplorer={showThemeExplorer}
+          onToggleThemeExplorer={() => setShowThemeExplorer((prev) => !prev)}
+        />
+      )}
+
+      {showThemeExplorer && (
+        <div className="px-4 py-2">
+          <ThemeCarousel
+            currentThemeId={themeId}
+            onSelectTheme={setThemeId}
+            onClose={() => setShowThemeExplorer(false)}
+          />
+        </div>
+      )}
+
+      <main className="flex-1">
+        {currentRole === "client" && (
+          <ClienteView
+            state={state}
+            activeTableId={clientTableId}
+            onRefreshState={fetchState}
           />
         )}
 
-        {showThemeExplorer && (
-          <div className="px-4 py-2">
-            <ThemeCarousel
-              currentThemeId={themeId}
-              onSelectTheme={setThemeId}
-              onClose={() => setShowThemeExplorer(false)}
-            />
-          </div>
+        {currentRole === "waiter" && (
+          <MozoView
+            state={state}
+            onRefreshState={fetchState}
+            activeUser={activeUser}
+            onLoginSuccess={handleLoginSuccess}
+            onLogout={handleLogout}
+          />
         )}
 
-        <main className="flex-1">
-          {currentRole === "client" && (
-            <ClienteView
-              state={state}
-              activeTableId={clientTableId}
-              onRefreshState={fetchState}
-            />
-          )}
+        {currentRole === "kitchen" && (
+          <KitchenKDS
+            state={state}
+            onRefreshState={fetchState}
+            onLogout={handleLogout}
+          />
+        )}
 
-          {currentRole === "waiter" && (
-            <MozoView
+        {currentRole === "admin" && (
+          activeUser && (activeUser.role === "ADMIN" || (activeUser.permissions && activeUser.permissions.length > 0)) ? (
+            <AdminView
               state={state}
               onRefreshState={fetchState}
               activeUser={activeUser}
+            />
+          ) : (
+            <AdminLogin
               onLoginSuccess={handleLoginSuccess}
-              onLogout={handleLogout}
+              onLoginError={(err) => console.log("Admin login error:", err)}
             />
-          )}
-
-          {currentRole === "kitchen" && (
-            <KitchenKDS
-              state={state}
-              onRefreshState={fetchState}
-              onLogout={handleLogout}
-            />
-          )}
-
-          {currentRole === "admin" && (
-            activeUser && (activeUser.role === "ADMIN" || (activeUser.permissions && activeUser.permissions.length > 0)) ? (
-              <AdminView
-                state={state}
-                onRefreshState={fetchState}
-                activeUser={activeUser}
-              />
-            ) : (
-              <AdminLogin
-                onLoginSuccess={handleLoginSuccess}
-                onLoginError={(err) => console.log("Admin login error:", err)}
-              />
-            )
-          )}
-        </main>
-      </Suspense>
+          )
+        )}
+      </main>
     </div>
   );
 }
