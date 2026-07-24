@@ -137,11 +137,9 @@ function AppContent() {
     setCurrentRole("client");
   };
 
-  if (isLoading) {
+  if (isLoading || !state) {
     return <LoadingScreen />;
   }
-
-  if (!state) return null;
 
   if (qrTableNumber !== null) {
     return (

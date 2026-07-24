@@ -89,9 +89,7 @@ onSnapshot(STATE_DOC_REF, async (docSnap) => {
 }, (error) => {
   console.error("Firestore onSnapshot error:", error);
   const fallback = loadOfflineStateCache();
-  if (fallback) {
-    publishState(fallback);
-  }
+  publishState(fallback || DEMO_STATE);
 });
 
 // Atomic transaction helper for mutating state safely
