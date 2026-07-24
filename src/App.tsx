@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { RestaurantState, User } from "./types";
 import { themes } from "./theme";
 import { subscribeToState } from "./stateClient";
+import { useOnlineStatus } from "./offlineSync";
 
 const RoleSelector = lazy(() => import("./components/RoleSelector"));
 const ClienteView = lazy(() => import("./components/ClienteView"));
@@ -71,7 +72,8 @@ function AppContent() {
   const [showThemeExplorer, setShowThemeExplorer] = useState(false);
   const [state, setState] = useState<RestaurantState | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isDemoMode, setIsDemoMode] = useState(false);
+  const isDemoMode = false;
+  const isOnline = useOnlineStatus();
   const hasRequestedDefaultTables = useRef(false);
 
   useEffect(() => {
@@ -166,9 +168,10 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-zinc-100 flex flex-col" id="restaurant-hacienda-app-root">
-      {isDemoMode && (
-        <div className="bg-amber-500/90 text-zinc-900 text-xs font-semibold text-center py-1.5 px-4">
-          Modo Demo - Explorando con datos de ejemplo. Conecta el servidor para uso real.
+      {!isOnline && (
+        <div className="bg-amber-600 text-white text-xs font-bold text-center py-2 px-4 flex items-center justify-center gap-2 shadow-md z-50">
+          <span>📶 MODO RESISTENTE SIN CONEXIÓN DE RED</span>
+          <span className="font-normal opacity-90 hidden sm:inline">— Operando con memoria local de respaldo. Se sincronizará al restablecer la red.</span>
         </div>
       )}
 
