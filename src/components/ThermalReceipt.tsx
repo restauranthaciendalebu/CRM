@@ -287,3 +287,132 @@ export function printThermalReceipt({
   }
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
+
+export interface PrintZetaReportParams {
+  shift: Shift;
+  operatorName: string;
+  payments: Array<{ amount: number; method: PaymentMethod; tip: number; createdAt?: string }>;
+}
+
+export function printThermalZetaReport({ shift, operatorName, payments }: PrintZetaReportParams) {
+  const openedDate = new Date(shift.openedAt);
+  const closedDate = shift.closedAt ? new Date(shift.closedAt) : new Date();
+
+  // Filter payments during shift window
+  const shiftPayments = payments.filter((p) => {
+    if (!p.createdAt) return false;
+    const pDate = new Date(p.createdAt);
+    return pDate >= openedDate && pDate <= closedDate;
+  });
+
+  const cashSales = shiftPayments
+    .filter((p) => p.method === PaymentMethod.CASH)
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  const cardSales = shiftPayments
+    .filter((p) => p.method === PaymentMethod.DEBIT || p.method === PaymentMethod.CREDIT)
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  const transferSales = shiftPayments
+    .filter((p) => p.method === PaymentMethod.TRANSFER)
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  const accountSales = shiftPayments
+    .filter((p) => p.method === PaymentMethod.ACCOUNT)
+    .reduce((sum, p) => sum + p.amount, 0);
+
+  const totalTips = shiftPayments.reduce((sum, p) => sum + (p.tip || 0), 0);
+  const totalSales = cashSales + cardSales + transferSales + accountSales;
+
+  const initialCash = shift.initialCash || 0;
+  const expectedCash = initialCash + cashSales;
+  const finalCash = shift.finalCash ?? expectedCash;
+  const diffCash = finalCash - expectedCash;
+
+  const openTimeStr = openedDate.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
+  const closeTimeStr = closedDate.toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" });
+  const dateStr = closedDate.toLocaleDateString("es-CL", { day: "2-digit", month: "2-digit", year: "numeric" });
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Cierre de Caja Zeta - ${dateStr}</title>
+  <style>
+    @page { size: 80mm auto; margin: 0; }
+    body { font-family: monospace; width: 300px; margin: 0 auto; padding: 10px; font-size: 11px; color: #000; }
+    .center { text-align: center; }
+    .bold { font-weight: bold; }
+    .header { margin-bottom: 8px; }
+    .header h2 { margin: 0; font-size: 15px; }
+    hr.sep { border: none; border-top: 1px dashed #000; margin: 6px 0; }
+    hr.double-sep { border: none; border-top: 2px solid #000; margin: 6px 0; }
+    table { width: 100%; border-collapse: collapse; }
+    td { padding: 2px 0; font-size: 11px; }
+    .item-price { text-align: right; }
+    .total-row { font-weight: bold; font-size: 12px; }
+    .diff-box { border: 1px solid #000; padding: 4px; margin-top: 6px; font-weight: bold; text-align: center; }
+    .no-print { margin-top: 12px; text-align: center; }
+    .print-btn { background: #000; color: #fff; border: none; padding: 8px 16px; border-radius: 4px; font-weight: bold; cursor: pointer; }
+    @media print { .no-print { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="header center">
+    <h2>RESTAURANT HACIENDA</h2>
+    <p style="margin:2px 0;">REPORT DE CIERRE DE CAJA (ZETA)</p>
+    <p style="margin:2px 0; font-size:10px;">Fecha: ${dateStr}</p>
+    <p style="margin:2px 0; font-size:10px;">Apertura: ${openTimeStr} | Cierre: ${closeTimeStr}</p>
+    <p style="margin:2px 0; font-size:10px;">Cajero: ${operatorName}</p>
+  </div>
+
+  <hr class="double-sep" />
+
+  <div class="bold center" style="margin-bottom:4px;">DESGLOSE DE VENTAS</div>
+  <table>
+    <tr><td>Efectivo (+)</td><td class="item-price">$${cashSales.toLocaleString("es-CL")}</td></tr>
+    <tr><td>Tarjetas Débito/Crédito (+)</td><td class="item-price">$${cardSales.toLocaleString("es-CL")}</td></tr>
+    <tr><td>Transferencias (+)</td><td class="item-price">$${transferSales.toLocaleString("es-CL")}</td></tr>
+    ${accountSales > 0 ? `<tr><td>Cuentas Fiadas (+)</td><td class="item-price">$${accountSales.toLocaleString("es-CL")}</td></tr>` : ""}
+    <tr><td>Propinas (+)</td><td class="item-price">$${totalTips.toLocaleString("es-CL")}</td></tr>
+  </table>
+
+  <hr class="sep" />
+
+  <table>
+    <tr class="total-row"><td>TOTAL VENTAS</td><td class="item-price">$${totalSales.toLocaleString("es-CL")}</td></tr>
+  </table>
+
+  <hr class="double-sep" />
+
+  <div class="bold center" style="margin-bottom:4px;">ARQUEO DE EFECTIVO</div>
+  <table>
+    <tr><td>Fondo Inicial de Caja</td><td class="item-price">$${initialCash.toLocaleString("es-CL")}</td></tr>
+    <tr><td>Ventas en Efectivo</td><td class="item-price">+$${cashSales.toLocaleString("es-CL")}</td></tr>
+    <tr class="total-row"><td>Efectivo Esperado</td><td class="item-price">$${expectedCash.toLocaleString("es-CL")}</td></tr>
+    <tr><td>Efectivo Declarado</td><td class="item-price">$${finalCash.toLocaleString("es-CL")}</td></tr>
+  </table>
+
+  <div class="diff-box">
+    DIFERENCIA DE CAJA: $${diffCash.toLocaleString("es-CL")}
+    ${diffCash === 0 ? " (EXACTA ✅)" : diffCash < 0 ? " (FALTANTE ⚠️)" : " (SOBRANTE ℹ️)"}
+  </div>
+
+  <div class="no-print">
+    <button class="print-btn" onclick="window.print()">🖨️ Imprimir Reporte Zeta</button>
+  </div>
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const printWin = window.open(url, "_blank");
+  if (printWin) {
+    printWin.onload = () => {
+      setTimeout(() => {
+        printWin.print();
+      }, 500);
+    };
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}

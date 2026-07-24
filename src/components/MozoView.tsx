@@ -44,7 +44,7 @@ import {
   UserPlus
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { printThermalReceipt } from "./ThermalReceipt";
+import { printThermalReceipt, printThermalZetaReport } from "./ThermalReceipt";
 import { isDirectServiceProduct } from "../orderUtils";
 import AddTableModal from "./AddTableModal";
 import WaiterReceiptHistory from "./WaiterReceiptHistory";
@@ -2839,22 +2839,59 @@ export default function MozoView({
               {/* Body */}
               <div className="p-5 space-y-4">
                 {activeShift ? (
-                  <div className="space-y-4">
+                  <div className="space-y-4 text-left">
                     <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 text-xs space-y-2">
-                      <span className="font-bold text-emerald-800 block">✓ Turno de Trabajo Activo</span>
-                      <p className="text-zinc-500">Iniciado por: <strong>{activeUser?.name}</strong></p>
-                      <p className="text-zinc-500">Fecha de apertura: <strong>{new Date(activeShift.openedAt).toLocaleTimeString()}</strong></p>
-                      <p className="text-zinc-500 font-bold">Caja de inicio: <strong>{formatCLP(activeShift.initialCash)}</strong></p>
+                      <span className="font-bold text-emerald-800 block text-sm">✓ Turno de Trabajo Activo</span>
+                      <p className="text-zinc-600">Iniciado por: <strong>{activeUser?.name}</strong></p>
+                      <p className="text-zinc-600">Apertura: <strong>{new Date(activeShift.openedAt).toLocaleTimeString("es-CL")}</strong></p>
+                      <p className="text-zinc-600 font-bold">Fondo Inicial: <strong>{formatCLP(activeShift.initialCash)}</strong></p>
                     </div>
 
+                    {/* Financial Shift Breakdown */}
+                    {(() => {
+                      const shiftPayments = (state.payments || []).filter((p) => {
+                        if (!p.createdAt) return false;
+                        return new Date(p.createdAt) >= new Date(activeShift.openedAt);
+                      });
+                      const cashSales = shiftPayments.filter(p => p.method === PaymentMethod.CASH).reduce((sum, p) => sum + p.amount, 0);
+                      const cardSales = shiftPayments.filter(p => p.method === PaymentMethod.DEBIT || p.method === PaymentMethod.CREDIT).reduce((sum, p) => sum + p.amount, 0);
+                      const transferSales = shiftPayments.filter(p => p.method === PaymentMethod.TRANSFER).reduce((sum, p) => sum + p.amount, 0);
+                      const totalSales = cashSales + cardSales + transferSales;
+                      const expectedCash = activeShift.initialCash + cashSales;
+
+                      return (
+                        <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 text-xs space-y-2">
+                          <span className="font-black text-zinc-900 block uppercase tracking-wider text-[10px]">📊 Resumen de Caja del Turno</span>
+                          <div className="flex justify-between text-zinc-600"><span>Ventas Efectivo:</span><span className="font-bold">{formatCLP(cashSales)}</span></div>
+                          <div className="flex justify-between text-zinc-600"><span>Ventas Tarjeta:</span><span className="font-bold">{formatCLP(cardSales)}</span></div>
+                          <div className="flex justify-between text-zinc-600"><span>Ventas Transferencia:</span><span className="font-bold">{formatCLP(transferSales)}</span></div>
+                          <div className="flex justify-between text-zinc-900 font-black pt-1 border-t border-zinc-200"><span>Total Ventas:</span><span className="text-amber-700">{formatCLP(totalSales)}</span></div>
+                          <div className="flex justify-between text-emerald-800 font-extrabold bg-emerald-500/10 p-2 rounded-xl mt-2"><span>Efectivo Esperado en Caja:</span><span>{formatCLP(expectedCash)}</span></div>
+
+                          <button
+                            onClick={() => {
+                              printThermalZetaReport({
+                                shift: { ...activeShift, closedAt: new Date().toISOString(), finalCash: shiftFinalCash || expectedCash },
+                                operatorName: activeUser?.name || "Cajero",
+                                payments: state.payments || []
+                              });
+                            }}
+                            className="w-full mt-3 bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                          >
+                            <Printer className="w-4 h-4 text-amber-400" /> Imprimir Ticket Zeta de Cierre
+                          </button>
+                        </div>
+                      );
+                    })()}
+
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-zinc-400 block uppercase">Arqueo / Caja final (CLP)</label>
+                      <label className="text-[10px] font-black text-zinc-400 block uppercase">Arqueo / Efectivo Final Declarado (CLP)</label>
                       <input
                         type="number"
                         placeholder="Ej. 125000"
                         value={shiftFinalCash || ""}
                         onChange={(e) => setShiftFinalCash(Number(e.target.value))}
-                        className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs text-zinc-900 focus:outline-none"
+                        className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs text-zinc-900 focus:outline-none font-bold"
                       />
                     </div>
 
@@ -2863,9 +2900,9 @@ export default function MozoView({
                         handleCloseShift(activeShift.id);
                         setIsShiftControlOpen(false);
                       }}
-                      className="w-full bg-red-600 hover:bg-red-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md transition-colors"
+                      className="w-full bg-red-600 hover:bg-red-700 text-white font-extrabold py-3 rounded-xl text-xs shadow-md transition-colors cursor-pointer"
                     >
-                      Cerrar Turno de Trabajo
+                      Cerrar Turno de Caja (Arqueo Final)
                     </button>
                   </div>
                 ) : (
