@@ -21,6 +21,7 @@ import { isDirectServiceProduct } from "./orderUtils";
 import { recalculateOrderStatus, restoreOrderItemStock } from "./orderItemMutationUtils";
 import { createTable, ensureMinimumTables } from "./tableUtils";
 import { getRemainingBalance } from "./billingUtils";
+import { loadOfflineStateCache } from "./offlineSync";
 
 const STATE_DOC_REF = doc(db, "settings", "restaurant_state");
 
@@ -85,6 +86,12 @@ onSnapshot(STATE_DOC_REF, async (docSnap) => {
     console.log("No remote state found, initializing Firestore with default schema...");
     await setDoc(STATE_DOC_REF, DEMO_STATE);
   }
+}, (error) => {
+  console.error("Firestore onSnapshot error:", error);
+  const fallback = loadOfflineStateCache();
+  if (fallback) {
+    publishState(fallback);
+  }
 });
 
 // Atomic transaction helper for mutating state safely
@@ -120,35 +127,35 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
 
     // Save back to firestore state doc
     transaction.set(STATE_DOC_REF, state);
-
-    // Sync entities to independent Firestore collections for unlimited storage
-    try {
-      if (state.payments && state.payments.length > 0) {
-        state.payments.forEach((payment) => {
-          transaction.set(doc(db, "payments", payment.id), payment);
-        });
-      }
-      if (state.orders && state.orders.length > 0) {
-        state.orders.forEach((order) => {
-          transaction.set(doc(db, "orders", order.id), order);
-        });
-      }
-      if (state.users && state.users.length > 0) {
-        state.users.forEach((user) => {
-          transaction.set(doc(db, "users", user.id), user);
-        });
-      }
-      if (state.reservations && state.reservations.length > 0) {
-        state.reservations.forEach((res) => {
-          transaction.set(doc(db, "reservations", res.id), res);
-        });
-      }
-    } catch (e) {
-      // Ignore batch collection transaction overflow if state doc was saved
-    }
-
     return state;
   });
+
+  // Async collection sync without blocking transaction
+  try {
+    if (updatedState.payments && updatedState.payments.length > 0) {
+      updatedState.payments.forEach((payment) => {
+        void setDoc(doc(db, "payments", payment.id), payment).catch(() => {});
+      });
+    }
+    if (updatedState.orders && updatedState.orders.length > 0) {
+      updatedState.orders.forEach((order) => {
+        void setDoc(doc(db, "orders", order.id), order).catch(() => {});
+      });
+    }
+    if (updatedState.users && updatedState.users.length > 0) {
+      updatedState.users.forEach((user) => {
+        void setDoc(doc(db, "users", user.id), user).catch(() => {});
+      });
+    }
+    if (updatedState.reservations && updatedState.reservations.length > 0) {
+      updatedState.reservations.forEach((res) => {
+        void setDoc(doc(db, "reservations", res.id), res).catch(() => {});
+      });
+    }
+  } catch (e) {
+    // Ignore async sync errors
+  }
+
   publishState(updatedState);
   return updatedState;
 }
