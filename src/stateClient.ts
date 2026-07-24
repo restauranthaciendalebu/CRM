@@ -1,43 +1,35 @@
 import { RestaurantState } from "./types";
 import { saveOfflineStateCache, loadOfflineStateCache } from "./offlineSync";
+import { DEMO_STATE } from "./demoState";
 
 const STATE_POLL_MS = 2500;
 
 export function subscribeToState(callback: (state: RestaurantState) => void) {
-  if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-    let unsubscribe: (() => void) | undefined;
-    let isActive = true;
+  let unsubscribe: (() => void) | undefined;
+  let isActive = true;
 
-    // Fast initial render from local cache while connecting
-    const cachedState = loadOfflineStateCache();
-    if (cachedState) {
-      callback(cachedState);
-    }
+  // 1. Deliver local cache or default demo state immediately so loading screen disappears in 0ms
+  const cachedState = loadOfflineStateCache();
+  callback(cachedState || DEMO_STATE);
 
-    void import("./dbClient").then((client) => {
-      if (!isActive) return;
+  // 2. Subscribe to Firestore Web SDK directly for real-time cloud data
+  void import("./dbClient").then((client) => {
+    if (!isActive) return;
+    try {
       unsubscribe = client.subscribeToState((newState) => {
         saveOfflineStateCache(newState);
         callback(newState);
       });
-    });
+    } catch (e) {
+      console.warn("Firestore real-time subscription warning:", e);
+    }
+  }).catch((err) => {
+    console.warn("Could not load dbClient dynamically:", err);
+  });
 
-    return () => {
-      isActive = false;
-      unsubscribe?.();
-    };
-  }
-
-  let isActive = true;
+  // 3. Parallel API polling for Node server backend environments
   let timeoutId: number | undefined;
-
-  // Fast initial render from local cache
-  const cachedState = loadOfflineStateCache();
-  if (cachedState) {
-    callback(cachedState);
-  }
-
-  const loadState = async () => {
+  const loadStateFromApi = async () => {
     try {
       const res = await fetch("/api/state");
       if (res.ok) {
@@ -48,22 +40,19 @@ export function subscribeToState(callback: (state: RestaurantState) => void) {
         }
       }
     } catch (e) {
-      // Offline fallback: load state from local storage
-      const fallback = loadOfflineStateCache();
-      if (fallback && isActive) {
-        callback(fallback);
-      }
+      // Ignore API fetch errors on static hosting
     } finally {
       if (isActive) {
-        timeoutId = window.setTimeout(loadState, STATE_POLL_MS);
+        timeoutId = window.setTimeout(loadStateFromApi, STATE_POLL_MS);
       }
     }
   };
 
-  loadState();
+  loadStateFromApi();
 
   return () => {
     isActive = false;
+    unsubscribe?.();
     if (timeoutId !== undefined) {
       window.clearTimeout(timeoutId);
     }
