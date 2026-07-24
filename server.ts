@@ -677,6 +677,10 @@ async function startServer() {
         .reduce((sum, payment) => sum + payment.amount, 0);
       const balanceBeforePayment = getRemainingBalance(billingTotal, alreadyPaid);
 
+      if (balanceBeforePayment <= 0 || order.status === OrderStatus.CLOSED) {
+        errorMsg = "Esta mesa ya se encuentra pagada por completo. Se ha evitado un cobro duplicado.";
+        return;
+      }
       if (payments.length !== 1) {
         errorMsg = "Cada cobro debe registrar un solo pago. Actualiza la aplicación e intenta nuevamente";
         return;

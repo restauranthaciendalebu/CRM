@@ -134,6 +134,7 @@ export default function MozoView({
   const [lastBillingOrderId, setLastBillingOrderId] = useState("");
   const [billingRemainingAfterPayment, setBillingRemainingAfterPayment] = useState(0);
   const [billingClosedAfterPayment, setBillingClosedAfterPayment] = useState(false);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
   // Shift Management State
   const [isShiftControlOpen, setIsShiftControlOpen] = useState(false);
@@ -962,6 +963,10 @@ export default function MozoView({
     // Each confirmation is one real payment and therefore one receipt.
     const paymentsPayload = [createPaymentPayload(paymentAmount, paymentMethod, allocatedTip, allocatedDiscount)];
 
+    // Prevent duplicate rapid click submissions
+    if (isSubmittingPayment) return;
+    setIsSubmittingPayment(true);
+
     try {
       const res = await fetch(`/api/orders/${activeOrder.id}/close`, {
         method: "POST",
@@ -1013,6 +1018,8 @@ export default function MozoView({
       }
     } catch (e) {
       showBanner("Error de conexión al cerrar la boleta", "error");
+    } finally {
+      setIsSubmittingPayment(false);
     }
   };
 
@@ -2800,16 +2807,23 @@ export default function MozoView({
                   </button>
                   <button
                     onClick={handleCloseBillSubmit}
-                    disabled={isBillingAmountInvalid || (paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer)}
-                    className={`flex-2 text-white font-extrabold py-3 rounded-xl text-xs shadow-md transition-colors ${
-                      isBillingAmountInvalid || (paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer)
+                    disabled={isSubmittingPayment || isBillingAmountInvalid || (paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer)}
+                    className={`flex-2 text-white font-extrabold py-3 rounded-xl text-xs shadow-md transition-colors flex items-center justify-center gap-2 ${
+                      isSubmittingPayment || isBillingAmountInvalid || (paymentMethod === PaymentMethod.ACCOUNT && !selectedBillingCreditCustomer)
                         ? "bg-zinc-300 cursor-not-allowed"
                         : "bg-emerald-600 hover:bg-emerald-700 cursor-pointer"
                     }`}
                   >
-                    {paymentMethod === PaymentMethod.ACCOUNT
-                      ? `Confirmar cargo ${formatCLP(nextBillingPaymentAmount)}`
-                      : `Cobrar ${formatCLP(nextBillingPaymentAmount)}`}
+                    {isSubmittingPayment ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Procesando Pago...</span>
+                      </>
+                    ) : paymentMethod === PaymentMethod.ACCOUNT ? (
+                      `Confirmar cargo ${formatCLP(nextBillingPaymentAmount)}`
+                    ) : (
+                      `Cobrar ${formatCLP(nextBillingPaymentAmount)}`
+                    )}
                   </button>
                 </div>
               )}
