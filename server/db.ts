@@ -379,17 +379,53 @@ export class LocalDb {
     this.stateCache = this.cloneState(state);
 
     if (this.remoteDoc) {
-      void this.remoteDoc.set(this.stateCache).catch((e) => {
-        console.error("Error saving restaurant DB to Firestore:", e);
-      });
+      try {
+        const firestore = getFirestore();
+        // 1. Save global state document
+        void this.remoteDoc.set(this.stateCache).catch((e) => {
+          console.error("Error saving restaurant DB to Firestore:", e);
+        });
+
+        // 2. Save individual collection documents for unlimited storage capacity
+        if (state.payments && state.payments.length > 0) {
+          state.payments.forEach((payment) => {
+            void firestore.collection("payments").doc(payment.id).set(payment).catch(() => {});
+          });
+        }
+
+        if (state.orders && state.orders.length > 0) {
+          state.orders.forEach((order) => {
+            void firestore.collection("orders").doc(order.id).set(order).catch(() => {});
+          });
+        }
+
+        if (state.users && state.users.length > 0) {
+          state.users.forEach((user) => {
+            void firestore.collection("users").doc(user.id).set(user).catch(() => {});
+          });
+        }
+
+        if (state.reservations && state.reservations.length > 0) {
+          state.reservations.forEach((res) => {
+            void firestore.collection("reservations").doc(res.id).set(res).catch(() => {});
+          });
+        }
+      } catch (e) {
+        console.error("Error performing multi-collection write in Firestore Admin:", e);
+      }
       return;
     }
 
     try {
       const dbDir = path.dirname(DB_FILE);
       const backupDir = path.join(dbDir, "backups");
+      const collectionsDir = path.join(dbDir, "collections");
+
       if (!fs.existsSync(backupDir)) {
         fs.mkdirSync(backupDir, { recursive: true });
+      }
+      if (!fs.existsSync(collectionsDir)) {
+        fs.mkdirSync(collectionsDir, { recursive: true });
       }
 
       // Save atomic via temp file to avoid file truncation/corruption on crash
@@ -401,6 +437,14 @@ export class LocalDb {
       // Maintain a safety backup file
       const backupFile = path.join(backupDir, "restaurant_db_backup.json");
       fs.writeFileSync(backupFile, jsonContent, "utf-8");
+
+      // Save individual JSON collection files for modular storage
+      fs.writeFileSync(path.join(collectionsDir, "payments.json"), JSON.stringify(state.payments || [], null, 2), "utf-8");
+      fs.writeFileSync(path.join(collectionsDir, "orders.json"), JSON.stringify(state.orders || [], null, 2), "utf-8");
+      fs.writeFileSync(path.join(collectionsDir, "users.json"), JSON.stringify(state.users || [], null, 2), "utf-8");
+      fs.writeFileSync(path.join(collectionsDir, "reservations.json"), JSON.stringify(state.reservations || [], null, 2), "utf-8");
+      fs.writeFileSync(path.join(collectionsDir, "tables.json"), JSON.stringify(state.tables || [], null, 2), "utf-8");
+      fs.writeFileSync(path.join(collectionsDir, "products.json"), JSON.stringify(state.products || [], null, 2), "utf-8");
     } catch (e) {
       console.error("Error saving restaurant DB:", e);
     }

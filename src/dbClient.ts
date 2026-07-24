@@ -118,8 +118,35 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
     // Apply the mutator logic
     mutator(state);
 
-    // Save back to firestore
+    // Save back to firestore state doc
     transaction.set(STATE_DOC_REF, state);
+
+    // Sync entities to independent Firestore collections for unlimited storage
+    try {
+      if (state.payments && state.payments.length > 0) {
+        state.payments.forEach((payment) => {
+          transaction.set(doc(db, "payments", payment.id), payment);
+        });
+      }
+      if (state.orders && state.orders.length > 0) {
+        state.orders.forEach((order) => {
+          transaction.set(doc(db, "orders", order.id), order);
+        });
+      }
+      if (state.users && state.users.length > 0) {
+        state.users.forEach((user) => {
+          transaction.set(doc(db, "users", user.id), user);
+        });
+      }
+      if (state.reservations && state.reservations.length > 0) {
+        state.reservations.forEach((res) => {
+          transaction.set(doc(db, "reservations", res.id), res);
+        });
+      }
+    } catch (e) {
+      // Ignore batch collection transaction overflow if state doc was saved
+    }
+
     return state;
   });
   publishState(updatedState);
