@@ -2,8 +2,178 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAnonymous() {
+      return signedIn()
+        && request.auth.token.firebase.sign_in_provider == "anonymous";
+    }
+
+    function accessPath() {
+      return /databases/$(database)/documents/access/$(request.auth.uid);
+    }
+
+    function isStaff() {
+      return signedIn()
+        && !isAnonymous()
+        && exists(accessPath())
+        && get(accessPath()).data.active == true;
+    }
+
+    function role() {
+      return get(accessPath()).data.role;
+    }
+
+    function isAdmin() {
+      return isStaff() && role() == "ADMIN";
+    }
+
+    function isWaiter() {
+      return isStaff() && role() == "WAITER";
+    }
+
+    function isKitchen() {
+      return isStaff() && role() == "KITCHEN";
+    }
+
+    match /staffDirectory/{userId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /access/{userId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow write: if isAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /tables/{tableId} {
+      allow read: if true;
+      allow write: if isAdmin() || isWaiter();
+      allow update: if isAnonymous()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status"])
+        && request.resource.data.status in ["OCCUPIED", "BILL_REQUESTED"];
+    }
+
+    match /orders/{orderId} {
+      allow read: if isStaff()
+        || (isAnonymous() && resource.data.customerUid == request.auth.uid);
+      allow create: if isAdmin() || isWaiter()
+        || (isAnonymous()
+          && request.resource.data.customerUid == request.auth.uid
+          && request.resource.data.status == "PENDING_APPROVAL"
+          && request.resource.data.tableId is string
+          && request.resource.data.tableId.size() <= 80
+          && request.resource.data.items is list
+          && request.resource.data.items.size() > 0
+          && request.resource.data.items.size() <= 50);
+      allow update: if isAdmin() || isWaiter() || isKitchen()
+        || (isAnonymous()
+          && resource.data.customerUid == request.auth.uid
+          && request.resource.data.customerUid == request.auth.uid
+          && resource.data.status == "PENDING_APPROVAL"
+          && request.resource.data.status == resource.data.status
+          && request.resource.data.tableId == resource.data.tableId
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(["items", "updatedAt", "customerCount", "notes", "customerPhone"])
+          && request.resource.data.items is list
+          && request.resource.data.items.size() <= 50);
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isStaff();
+      allow write: if isAdmin() || isWaiter();
+      allow create: if isAnonymous()
+        && request.resource.data.requesterUid == request.auth.uid
+        && request.resource.data.type in ["CALL_WAITER", "REQUEST_BILL", "NEW_ORDER"]
+        && request.resource.data.tableNumber is int
+        && request.resource.data.tableNumber > 0
+        && request.resource.data.tableNumber <= 200
+        && request.resource.data.resolved == false
+        && request.resource.data.notes is string
+        && request.resource.data.notes.size() <= 500;
+    }
+
+    match /customers/{customerId} {
+      allow read, write: if isAdmin() || isWaiter();
+    }
+
+    match /loyaltyTxs/{transactionId} {
+      allow read, write: if isAdmin() || isWaiter();
+    }
+
+    match /payments/{paymentId} {
+      allow read, write: if isAdmin() || isWaiter();
+    }
+
+    match /reservations/{reservationId} {
+      allow read, write: if isAdmin() || isWaiter();
+    }
+
+    match /shifts/{shiftId} {
+      allow read, write: if isAdmin() || isWaiter();
+    }
+
+    match /ingredients/{ingredientId} {
+      allow read: if isStaff();
+      allow write: if isAdmin() || isWaiter();
+    }
+
+    match /inventoryTransactions/{transactionId} {
+      allow read: if isStaff();
+      allow write: if isAdmin() || isWaiter();
+    }
+
+    match /promotions/{promotionId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isStaff();
+      allow create: if isStaff()
+        && request.resource.data.id == logId
+        && request.resource.data.action is string
+        && request.resource.data.action.size() <= 120
+        && (!("details" in request.resource.data)
+          || (request.resource.data.details is string
+            && request.resource.data.details.size() <= 2000));
+      allow update, delete: if isAdmin();
+    }
+
+    match /system/{documentId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /settings/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

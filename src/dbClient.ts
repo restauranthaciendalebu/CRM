@@ -1,5 +1,22 @@
-import { db } from "./firebase";
-import { doc, getDoc, setDoc, onSnapshot, runTransaction } from "firebase/firestore";
+import { auth, db } from "./firebase";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  onSnapshot,
+  query,
+  runTransaction,
+  setDoc,
+  where,
+} from "firebase/firestore";
+import {
+  onAuthStateChanged,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
 import { 
   RestaurantState, 
   Role, 
@@ -14,27 +31,73 @@ import {
   Order,
   OrderItem,
   Table,
-  Customer
+  Customer,
+  User
 } from "./types";
 import { DEMO_STATE } from "./demoState";
 import { isDirectServiceProduct } from "./orderUtils";
 import { recalculateOrderStatus, restoreOrderItemStock } from "./orderItemMutationUtils";
 import { createTable, ensureMinimumTables } from "./tableUtils";
 import { getRemainingBalance } from "./billingUtils";
-import { loadOfflineStateCache } from "./offlineSync";
-
-const STATE_DOC_REF = doc(db, "settings", "restaurant_state");
 
 // Cache local of the database state
 let currentCachedState: RestaurantState | null = null;
 let currentClientState: RestaurantState | null = null;
 let currentClientStateJson = "";
 let stateListeners: ((state: RestaurantState) => void)[] = [];
-let authFailureCount = 0;
-let authLockedUntil = 0;
+let firestoreUnsubscribers: Array<() => void> = [];
 
-const AUTH_MAX_FAILED_ATTEMPTS = 5;
-const AUTH_LOCK_MS = 5 * 60 * 1000;
+const COLLECTION_FIELDS = [
+  "users",
+  "tables",
+  "categories",
+  "products",
+  "ingredients",
+  "orders",
+  "customers",
+  "loyaltyTxs",
+  "promotions",
+  "payments",
+  "reservations",
+  "shifts",
+  "notifications",
+  "auditLogs",
+  "inventoryTransactions",
+] as const;
+type CollectionField = typeof COLLECTION_FIELDS[number];
+
+const PUBLIC_COLLECTIONS = ["tables", "categories", "products"] as const;
+
+function createEmptyState(): RestaurantState {
+  return {
+    users: [],
+    tables: [],
+    categories: [],
+    products: [],
+    ingredients: [],
+    orders: [],
+    customers: [],
+    loyaltyTxs: [],
+    promotions: [],
+    payments: [],
+    reservations: [],
+    shifts: [],
+    notifications: [],
+    auditLogs: [],
+    inventoryTransactions: [],
+    onlyViewMenuQr: false,
+  };
+}
+
+function cloneState(state: RestaurantState): RestaurantState {
+  return JSON.parse(JSON.stringify(state)) as RestaurantState;
+}
+
+function ensureStateArrays(state: RestaurantState) {
+  for (const field of COLLECTION_FIELDS) {
+    if (!Array.isArray(state[field])) (state as any)[field] = [];
+  }
+}
 
 // Helper function to dynamically subscribe to Firestore changes in real-time
 export function subscribeToState(callback: (state: RestaurantState) => void) {
@@ -70,89 +133,169 @@ export function applyLocalStateUpdate(mutator: (state: RestaurantState) => void)
 }
 
 export async function refreshStateFromServer() {
-  const snap = await getDoc(STATE_DOC_REF);
-  if (snap.exists()) {
-    publishState(snap.data() as RestaurantState);
+  if (!currentCachedState) return;
+  const next = cloneState(currentCachedState);
+  const isStaff = Boolean(auth.currentUser && !auth.currentUser.isAnonymous);
+  const fields = isStaff ? COLLECTION_FIELDS : PUBLIC_COLLECTIONS;
+  await Promise.all(fields.map(async (field) => {
+    const snapshot = await getDocs(collection(db, field));
+    (next as any)[field] = snapshot.docs.map((item) => item.data());
+  }));
+  const configSnapshot = await getDoc(doc(db, "config", "restaurant"));
+  if (configSnapshot.exists()) {
+    next.onlyViewMenuQr = Boolean(configSnapshot.data().onlyViewMenuQr);
+  }
+  currentCachedState = next;
+  publishState(next);
+}
+
+function startFirestoreSubscriptions() {
+  firestoreUnsubscribers.forEach((unsubscribe) => unsubscribe());
+  firestoreUnsubscribers = [];
+  const next = createEmptyState();
+  const currentUser = auth.currentUser;
+  const isStaff = Boolean(currentUser && !currentUser.isAnonymous);
+  const required = new Set<string>([...PUBLIC_COLLECTIONS, "staffDirectory", "config"]);
+  if (isStaff) COLLECTION_FIELDS.forEach((field) => required.add(field));
+  if (currentUser?.isAnonymous) required.add("orders");
+  const loaded = new Set<string>();
+
+  const commit = (name: string) => {
+    loaded.add(name);
+    if ([...required].every((entry) => loaded.has(entry))) {
+      currentCachedState = next;
+      publishState(next);
+    }
+  };
+
+  for (const field of PUBLIC_COLLECTIONS) {
+    firestoreUnsubscribers.push(onSnapshot(collection(db, field), (snapshot) => {
+      (next as any)[field] = snapshot.docs.map((item) => item.data());
+      commit(field);
+    }));
+  }
+
+  firestoreUnsubscribers.push(onSnapshot(collection(db, "staffDirectory"), (snapshot) => {
+    if (!isStaff) {
+      next.users = snapshot.docs.map((item) => item.data() as User);
+    }
+    commit("staffDirectory");
+  }));
+
+  firestoreUnsubscribers.push(onSnapshot(doc(db, "config", "restaurant"), (snapshot) => {
+    next.onlyViewMenuQr = Boolean(snapshot.data()?.onlyViewMenuQr);
+    commit("config");
+  }));
+
+  if (isStaff) {
+    for (const field of COLLECTION_FIELDS) {
+      if ((PUBLIC_COLLECTIONS as readonly string[]).includes(field)) {
+        commit(field);
+        continue;
+      }
+      firestoreUnsubscribers.push(onSnapshot(collection(db, field), (snapshot) => {
+        (next as any)[field] = snapshot.docs.map((item) => item.data());
+        commit(field);
+      }));
+    }
+  } else if (currentUser?.isAnonymous) {
+    const ownOrders = query(
+      collection(db, "orders"),
+      where("customerUid", "==", currentUser.uid),
+    );
+    firestoreUnsubscribers.push(onSnapshot(ownOrders, (snapshot) => {
+      next.orders = snapshot.docs.map((item) => item.data() as Order);
+      commit("orders");
+    }));
   }
 }
 
-// Automatically listen to firestore state document in real time
-onSnapshot(STATE_DOC_REF, async (docSnap) => {
-  if (docSnap.exists()) {
-    const data = docSnap.data() as RestaurantState;
-    publishState(data);
-  } else {
-    // Database hasn't been initialized yet. Save the default initial state
-    console.log("No remote state found, initializing Firestore with default schema...");
-    await setDoc(STATE_DOC_REF, DEMO_STATE);
+onAuthStateChanged(auth, (user) => {
+  startFirestoreSubscriptions();
+  if (!user && new URLSearchParams(window.location.search).has("mesa")) {
+    void signInAnonymously(auth);
   }
-}, (error) => {
-  console.error("Firestore onSnapshot error:", error);
-  const fallback = loadOfflineStateCache();
-  publishState(fallback || DEMO_STATE);
 });
+
+type StateChange = {
+  field: CollectionField;
+  id: string;
+  before?: any;
+  after?: any;
+};
+
+function diffState(before: RestaurantState, after: RestaurantState): StateChange[] {
+  const changes: StateChange[] = [];
+  for (const field of COLLECTION_FIELDS) {
+    const beforeById = new Map<string, any>(
+      ((before[field] || []) as any[]).map((item): [string, any] => [item.id, item]),
+    );
+    const afterById = new Map<string, any>(
+      ((after[field] || []) as any[]).map((item): [string, any] => [item.id, item]),
+    );
+    const ids = new Set([...beforeById.keys(), ...afterById.keys()]);
+    for (const id of ids) {
+      const previous = beforeById.get(id);
+      const next = afterById.get(id);
+      if (JSON.stringify(previous) !== JSON.stringify(next)) {
+        changes.push({ field, id, before: previous, after: next });
+      }
+    }
+  }
+  return changes;
+}
+
+function replaceEntity(state: RestaurantState, field: CollectionField, id: string, data?: any) {
+  const entities = [...((state[field] || []) as any[])];
+  const index = entities.findIndex((item) => item.id === id);
+  if (data && index >= 0) entities[index] = data;
+  else if (data) entities.push(data);
+  else if (index >= 0) entities.splice(index, 1);
+  (state as any)[field] = entities;
+}
 
 // Atomic transaction helper for mutating state safely
 async function updateState(mutator: (state: RestaurantState) => void): Promise<RestaurantState> {
+  if (!auth.currentUser) throw new Error("Debes iniciar sesión para realizar esta acción.");
+  const base = cloneState(currentCachedState || createEmptyState());
+  ensureStateArrays(base);
+  const preliminary = cloneState(base);
+  mutator(preliminary);
+  const preliminaryChanges = diffState(base, preliminary);
+
   const updatedState = await runTransaction(db, async (transaction) => {
-    const sfDoc = await transaction.get(STATE_DOC_REF);
-    let state: RestaurantState;
-    if (!sfDoc.exists()) {
-      state = JSON.parse(JSON.stringify(DEMO_STATE));
-    } else {
-      state = sfDoc.data() as RestaurantState;
+    const existingChanges = preliminaryChanges.filter((change) => change.before);
+    const refs = existingChanges.map((change) => doc(db, change.field, change.id));
+    const snapshots = await Promise.all(refs.map((reference) => transaction.get(reference)));
+    const remoteBase = cloneState(base);
+    snapshots.forEach((snapshot, index) => {
+      const change = existingChanges[index];
+      replaceEntity(remoteBase, change.field, change.id, snapshot.exists() ? snapshot.data() : undefined);
+    });
+
+    const candidate = cloneState(remoteBase);
+    mutator(candidate);
+    const finalChanges = diffState(remoteBase, candidate);
+    const readPaths = new Set(existingChanges.map((change) => `${change.field}/${change.id}`));
+    for (const change of finalChanges) {
+      const path = `${change.field}/${change.id}`;
+      if (change.before && !readPaths.has(path)) {
+        throw new Error("Los datos cambiaron mientras se guardaba. Intenta nuevamente.");
+      }
+      const reference = doc(db, change.field, change.id);
+      if (change.after) {
+        transaction.set(reference, JSON.parse(JSON.stringify(change.after)));
+      } else {
+        transaction.delete(reference);
+      }
     }
-    
-    // Ensure all required fields exist
-    if (!state.users) state.users = [];
-    if (!state.tables) state.tables = [];
-    if (!state.categories) state.categories = [];
-    if (!state.products) state.products = [];
-    if (!state.ingredients) state.ingredients = [];
-    if (!state.orders) state.orders = [];
-    if (!state.customers) state.customers = [];
-    if (!state.loyaltyTxs) state.loyaltyTxs = [];
-    if (!state.promotions) state.promotions = [];
-    if (!state.payments) state.payments = [];
-    if (!state.reservations) state.reservations = [];
-    if (!state.shifts) state.shifts = [];
-    if (!state.notifications) state.notifications = [];
-    if (!state.auditLogs) state.auditLogs = [];
-    if (!state.inventoryTransactions) state.inventoryTransactions = [];
-
-    // Apply the mutator logic
-    mutator(state);
-
-    // Save back to firestore state doc
-    transaction.set(STATE_DOC_REF, state);
-    return state;
+    if (remoteBase.onlyViewMenuQr !== candidate.onlyViewMenuQr) {
+      transaction.set(doc(db, "config", "restaurant"), {
+        onlyViewMenuQr: Boolean(candidate.onlyViewMenuQr),
+      });
+    }
+    return candidate;
   });
-
-  // Async collection sync without blocking transaction
-  try {
-    if (updatedState.payments && updatedState.payments.length > 0) {
-      updatedState.payments.forEach((payment) => {
-        void setDoc(doc(db, "payments", payment.id), payment).catch(() => {});
-      });
-    }
-    if (updatedState.orders && updatedState.orders.length > 0) {
-      updatedState.orders.forEach((order) => {
-        void setDoc(doc(db, "orders", order.id), order).catch(() => {});
-      });
-    }
-    if (updatedState.users && updatedState.users.length > 0) {
-      updatedState.users.forEach((user) => {
-        void setDoc(doc(db, "users", user.id), user).catch(() => {});
-      });
-    }
-    if (updatedState.reservations && updatedState.reservations.length > 0) {
-      updatedState.reservations.forEach((res) => {
-        void setDoc(doc(db, "reservations", res.id), res).catch(() => {});
-      });
-    }
-  } catch (e) {
-    // Ignore async sync errors
-  }
 
   publishState(updatedState);
   return updatedState;
@@ -205,24 +348,50 @@ function createResponse(data: any, status: number = 200) {
   });
 }
 
-function getAuthLockError() {
-  const now = Date.now();
-  if (authLockedUntil <= now) return "";
-  const seconds = Math.ceil((authLockedUntil - now) / 1000);
-  return `Demasiados intentos fallidos. Intenta nuevamente en ${seconds} segundos.`;
+function authPassword(value: string) {
+  return /^\d{4}$/.test(value) ? `H!${value}` : value;
 }
 
-function recordAuthFailure() {
-  authFailureCount++;
-  if (authFailureCount >= AUTH_MAX_FAILED_ATTEMPTS) {
-    authLockedUntil = Date.now() + AUTH_LOCK_MS;
-    authFailureCount = 0;
+function authEmail(username: string) {
+  return `${normalizeUsername(username).replace(/[^a-z0-9._-]/g, "")}@staff.restaurant-hacienda.local`;
+}
+
+async function assertCurrentAdmin() {
+  const currentUser = auth.currentUser;
+  if (!currentUser || currentUser.isAnonymous) throw new Error("Acceso no autorizado.");
+  const accessSnapshot = await getDoc(doc(db, "access", currentUser.uid));
+  if (!accessSnapshot.exists() || accessSnapshot.data().active !== true || accessSnapshot.data().role !== Role.ADMIN) {
+    throw new Error("Solo un administrador puede gestionar el personal.");
   }
 }
 
-function clearAuthFailures() {
-  authFailureCount = 0;
-  authLockedUntil = 0;
+async function provisionStaffAccount(username: string, pin: string) {
+  await assertCurrentAdmin();
+  const apiKey = auth.app.options.apiKey;
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: authEmail(username),
+        password: authPassword(pin),
+        returnSecureToken: false,
+      }),
+    },
+  );
+  const payload = await response.json();
+  if (!response.ok) {
+    if (payload?.error?.message === "EMAIL_EXISTS") {
+      throw new Error("Ese nombre de usuario ya tiene una cuenta de acceso.");
+    }
+    throw new Error("No se pudo crear la cuenta de acceso.");
+  }
+  return String(payload.localId);
+}
+
+export async function signOutCurrentUser() {
+  await signOut(auth);
 }
 
 // Intercept window.fetch and routing calls to simulate server
@@ -237,14 +406,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     // 1. Get state
     if (path === "/api/state" && method === "GET") {
       if (!currentCachedState) {
-        // Wait a bit for initial snapshot or fetch once
-        const snap = await getDoc(STATE_DOC_REF);
-        if (snap.exists()) {
-          currentCachedState = snap.data() as RestaurantState;
-        } else {
-          await setDoc(STATE_DOC_REF, DEMO_STATE);
-          currentCachedState = DEMO_STATE;
-        }
+        return createResponse({ error: "La información aún se está cargando." }, 503);
       }
       // Return unresolved notifications only to waitstaff
       const state = {
@@ -256,67 +418,38 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
     // 2. Auth PIN
     if (path === "/api/auth/pin" && method === "POST") {
-      const { pin } = body;
-      const lockError = getAuthLockError();
-      if (lockError) {
-        return createResponse({ error: lockError }, 429);
-      }
-      if (typeof pin !== "string" || !/^\d{4}$/.test(pin)) {
-        recordAuthFailure();
-        return createResponse({ error: "PIN inválido" }, 401);
-      }
-      const state = currentCachedState || DEMO_STATE;
-      const user = state.users.find(u => u.pin === pin);
-      if (!user) {
-        recordAuthFailure();
-        return createResponse({ error: "PIN inválido" }, 401);
-      }
-      clearAuthFailures();
-      // The audit record is useful, but it should not block the user's access.
-      // The realtime listener will publish the audit update when it completes.
-      void updateState(s => {
-        if (!s.auditLogs) s.auditLogs = [];
-        s.auditLogs.push({
-          id: "audit_" + Math.random().toString(36).substring(2, 11),
-          userId: user.id,
-          userName: user.name,
-          action: "Inicio de Sesión",
-          details: `${user.name} inició sesión en el sistema.`,
-          createdAt: new Date().toISOString()
-        });
-      }).catch((error) => {
-        console.error("No se pudo guardar la auditoría de inicio de sesión", error);
-      });
-      return createResponse({ ...user, pin: "" });
+      return createResponse(
+        { error: "Selecciona tu usuario en la pantalla principal e ingresa tu clave." },
+        400,
+      );
     }
 
-    // Username/password login. Existing PIN accounts remain compatible through
-    // their legacy username and PIN until an administrator sets new credentials.
+    // Firebase Auth enforces remote throttling and keeps credentials out of Firestore.
     if (path === "/api/auth/login" && method === "POST") {
       const { username, password } = body;
-      const lockError = getAuthLockError();
-      if (lockError) return createResponse({ error: lockError }, 429);
       if (typeof username !== "string" || typeof password !== "string" || !username.trim() || !password) {
-        recordAuthFailure();
         return createResponse({ error: "Ingresa usuario y contraseña" }, 401);
       }
 
-      const state = currentCachedState || DEMO_STATE;
       const normalizedInput = normalizeUsername(username);
-      const user = state.users.find((candidate) => {
-        const matchesUsername = normalizeUsername(candidate.username || "") === normalizedInput ||
-          normalizeUsername(candidate.name) === normalizedInput ||
-          legacyUsername(candidate) === normalizedInput;
-        const matchesPassword = candidate.password === password || candidate.pin === password;
-        return matchesUsername && matchesPassword;
-      });
-
-      if (!user) {
-        recordAuthFailure();
-        return createResponse({ error: "Usuario o contraseña incorrectos" }, 401);
+      const credential = await signInWithEmailAndPassword(
+        auth,
+        authEmail(normalizedInput),
+        authPassword(password),
+      );
+      const accessSnapshot = await getDoc(doc(db, "access", credential.user.uid));
+      if (!accessSnapshot.exists() || accessSnapshot.data().active !== true) {
+        await signOut(auth);
+        return createResponse({ error: "Esta cuenta no está autorizada." }, 403);
       }
-
-      clearAuthFailures();
+      const profileSnapshot = await getDoc(
+        doc(db, "users", String(accessSnapshot.data().userId)),
+      );
+      if (!profileSnapshot.exists()) {
+        await signOut(auth);
+        return createResponse({ error: "No se encontró el perfil del usuario." }, 403);
+      }
+      const user = profileSnapshot.data() as User;
       void updateState(s => {
         if (!s.auditLogs) s.auditLogs = [];
         s.auditLogs.push({
@@ -489,7 +622,10 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             items: formattedItems,
-            customerPhone: customerPhone || undefined
+            customerPhone: customerPhone || undefined,
+            customerUid: !isWaiter && auth.currentUser?.isAnonymous
+              ? auth.currentUser.uid
+              : undefined
           };
           s.orders.push(newOrder);
           createdOrder = newOrder;
@@ -504,7 +640,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             type: "NEW_ORDER",
             createdAt: new Date().toISOString(),
             resolved: false,
-            notes: `Nuevo pedido mesa ${tableNum}`
+            notes: `Nuevo pedido mesa ${tableNum}`,
+            requesterUid: auth.currentUser?.uid
           });
         }
       });
@@ -827,7 +964,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         type: type as "CALL_WAITER" | "REQUEST_BILL",
         createdAt: new Date().toISOString(),
         resolved: false,
-        notes: notes || ""
+        notes: notes || "",
+        requesterUid: auth.currentUser?.uid
       };
 
       await updateState(s => {
@@ -1197,34 +1335,26 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     }
 
     if (path === "/api/users" && method === "POST") {
-      const { id, name, username, password, pin, role, permissions, operatorName } = body;
+      const { id, name, username, pin, role, permissions, operatorName } = body;
       let savedUser: any = null;
       let errorMsg = "";
+      const normalizedUsername = normalizeUsername(username || "");
+      const existingUser = id
+        ? (currentCachedState?.users || []).find((user) => user.id === id)
+        : undefined;
+      if (!name?.trim() || !normalizedUsername) {
+        return createResponse({ error: "Nombre y usuario son obligatorios." }, 400);
+      }
+      if (existingUser && normalizedUsername !== normalizeUsername(existingUser.username || legacyUsername(existingUser))) {
+        return createResponse({ error: "El nombre de usuario no se puede cambiar después de crear la cuenta." }, 400);
+      }
+      if (!id && !/^\d{4}$/.test(pin || "")) {
+        return createResponse({ error: "La clave debe tener exactamente 4 números." }, 400);
+      }
+      const provisionedAuthUid = id ? existingUser?.authUid : await provisionStaffAccount(normalizedUsername, pin);
 
       await updateState(s => {
         if (!s.auditLogs) s.auditLogs = [];
-
-        const shouldUpdatePin = typeof pin === "string" && pin.length > 0;
-        const shouldUpdatePassword = typeof password === "string" && password.length > 0;
-        const normalizedUsername = normalizeUsername(username || "");
-        if (!id && (!normalizedUsername || !shouldUpdatePassword)) {
-          errorMsg = "Usuario y contraseña son obligatorios.";
-          return;
-        }
-        if (!id && !/^\d{4}$/.test(pin || "")) {
-          errorMsg = "El PIN debe ser de exactamente 4 números.";
-          return;
-        }
-        if (id && shouldUpdatePin && !/^\d{4}$/.test(pin)) {
-          errorMsg = "El PIN debe ser de exactamente 4 números.";
-          return;
-        }
-
-        const duplicate = shouldUpdatePin ? s.users.find(u => u.pin === pin && u.id !== id) : null;
-        if (duplicate) {
-          errorMsg = `El PIN ${pin} ya está siendo utilizado por ${duplicate.name}.`;
-          return;
-        }
 
         const duplicateUsername = normalizedUsername
           ? s.users.find(u => normalizeUsername(u.username || legacyUsername(u)) === normalizedUsername && u.id !== id)
@@ -1242,11 +1372,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             const prevPermissions = user.permissions || [];
 
             user.name = name;
-            if (normalizedUsername) user.username = normalizedUsername;
-            if (shouldUpdatePassword) user.password = password;
-            if (shouldUpdatePin) {
-              user.pin = pin;
-            }
+            user.username = normalizedUsername;
             user.role = role;
             user.permissions = permissions || [];
             savedUser = user;
@@ -1262,10 +1388,9 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           const newId = "u_" + Math.random().toString(36).substring(2, 11);
           savedUser = {
             id: newId,
+            authUid: provisionedAuthUid,
             name,
             username: normalizedUsername,
-            password,
-            pin,
             role,
             permissions: permissions || []
           };
@@ -1283,6 +1408,23 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       if (errorMsg) {
         return createResponse({ error: errorMsg }, 400);
       }
+      if (!savedUser?.authUid) {
+        return createResponse({ error: "La cuenta no tiene una identidad de acceso válida." }, 400);
+      }
+      await Promise.all([
+        setDoc(doc(db, "access", savedUser.authUid), {
+          userId: savedUser.id,
+          role: savedUser.role,
+          permissions: savedUser.permissions || [],
+          active: true,
+        }),
+        setDoc(doc(db, "staffDirectory", savedUser.id), {
+          id: savedUser.id,
+          username: savedUser.username,
+          name: savedUser.name,
+          role: savedUser.role,
+        }),
+      ]);
       return createResponse({ success: true, user: savedUser });
     }
 
@@ -1291,12 +1433,14 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       const id = userDeleteMatch[1];
       const { operatorName } = body;
       let errorMsg = "";
+      let deletedUser: User | undefined;
 
       await updateState(s => {
         if (!s.auditLogs) s.auditLogs = [];
         const index = s.users.findIndex(u => u.id === id);
         if (index !== -1) {
           const user = s.users[index];
+          deletedUser = { ...user };
           s.users.splice(index, 1);
 
           s.auditLogs.push({
@@ -1313,6 +1457,15 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       if (errorMsg) {
         return createResponse({ error: errorMsg }, 404);
       }
+      if (deletedUser?.authUid) {
+        await setDoc(doc(db, "access", deletedUser.authUid), {
+          userId: deletedUser.id,
+          role: deletedUser.role,
+          permissions: deletedUser.permissions || [],
+          active: false,
+        });
+      }
+      if (deletedUser) await deleteDoc(doc(db, "staffDirectory", deletedUser.id));
       return createResponse({ success: true });
     }
 
@@ -1675,6 +1828,12 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     return createResponse({ error: "Ruta de API no encontrada" }, 404);
   } catch (error: any) {
     console.error("API Mock Intercept Error: ", error);
+    if (error?.code === "auth/invalid-credential" || error?.code === "auth/invalid-login-credentials") {
+      return createResponse({ error: "Usuario o contraseña incorrectos" }, 401);
+    }
+    if (error?.code === "auth/too-many-requests") {
+      return createResponse({ error: "Demasiados intentos. Espera unos minutos e intenta nuevamente." }, 429);
+    }
     return createResponse({ error: error.message || "Error interno del servidor simulado" }, 500);
   }
 }

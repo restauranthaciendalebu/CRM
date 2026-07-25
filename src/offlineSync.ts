@@ -1,12 +1,29 @@
 import React, { useState, useEffect } from "react";
 import { RestaurantState } from "./types";
 
-const OFFLINE_CACHE_KEY = "hacienda_offline_state_cache";
+const OFFLINE_CACHE_KEY = "hacienda_public_state_cache_v2";
+const LEGACY_CACHE_KEY = "hacienda_offline_state_cache";
 
 export function saveOfflineStateCache(state: RestaurantState) {
   if (typeof window === "undefined" || !state) return;
   try {
-    localStorage.setItem(OFFLINE_CACHE_KEY, JSON.stringify(state));
+    localStorage.removeItem(LEGACY_CACHE_KEY);
+    const publicState: RestaurantState = {
+      ...state,
+      users: state.users.map(({ id, name, username, role }) => ({ id, name, username, role })),
+      ingredients: [],
+      orders: [],
+      customers: [],
+      loyaltyTxs: [],
+      promotions: [],
+      payments: [],
+      reservations: [],
+      shifts: [],
+      notifications: [],
+      auditLogs: [],
+      inventoryTransactions: [],
+    };
+    localStorage.setItem(OFFLINE_CACHE_KEY, JSON.stringify(publicState));
   } catch (e) {
     // Ignore quota errors if storage full
   }

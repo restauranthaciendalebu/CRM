@@ -1,18 +1,19 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { RestaurantState, User } from "./types";
 import { themes } from "./theme";
 import { subscribeToState } from "./stateClient";
 import { useOnlineStatus } from "./offlineSync";
 
 import RoleSelector from "./components/RoleSelector";
-import ClienteView from "./components/ClienteView";
-import MozoView from "./components/MozoView";
-import KitchenKDS from "./components/KitchenKDS";
-import AdminView from "./components/AdminView";
-import AdminLogin from "./components/AdminLogin";
-import CustomerQRView from "./components/CustomerQRView";
-import ThemeCarousel from "./components/ThemeCarousel";
 import LoginView from "./components/LoginView";
+
+const ClienteView = lazy(() => import("./components/ClienteView"));
+const MozoView = lazy(() => import("./components/MozoView"));
+const KitchenKDS = lazy(() => import("./components/KitchenKDS"));
+const AdminView = lazy(() => import("./components/AdminView"));
+const AdminLogin = lazy(() => import("./components/AdminLogin"));
+const CustomerQRView = lazy(() => import("./components/CustomerQRView"));
+const ThemeCarousel = lazy(() => import("./components/ThemeCarousel"));
 
 function getQRTableNumber(): number | null {
   const params = new URLSearchParams(window.location.search);
@@ -131,6 +132,7 @@ function AppContent() {
   };
 
   const handleLogout = () => {
+    void import("./dbClient").then(({ signOutCurrentUser }) => signOutCurrentUser());
     setActiveUser(null);
     setCurrentRole("client");
   };
@@ -240,7 +242,9 @@ function AppContent() {
 export default function App() {
   return (
     <AppErrorBoundary>
-      <AppContent />
+      <Suspense fallback={<LoadingScreen />}>
+        <AppContent />
+      </Suspense>
     </AppErrorBoundary>
   );
 }

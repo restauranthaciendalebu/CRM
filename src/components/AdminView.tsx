@@ -550,8 +550,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
       setStaffError("El nombre es requerido.");
       return;
     }
-    if (!staffUsername.trim() || (!editingUser && !staffPassword)) {
-      setStaffError(editingUser ? "El usuario es requerido." : "Usuario y contraseña son obligatorios.");
+    if (!staffUsername.trim()) {
+      setStaffError("El usuario es requerido.");
       return;
     }
     const pinIsRequired = !editingUser;
@@ -570,7 +570,6 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
           id: editingUser?.id,
           name: staffName,
           username: staffUsername,
-          password: staffPassword,
           pin: staffPin,
           role: staffRole,
           permissions: staffPermissions,
@@ -724,7 +723,9 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     const headers = ["ID Boleta", "ID Orden", "Mesa", "Monto Total ($)", "Método de Pago", "Propina ($)", "Descuento ($)", "Fecha"];
     const rows = payments.map((p) => {
       const order = state.orders?.find((o) => o.id === p.orderId);
-      const tableNumber = order ? order.tableNumber : "-";
+      const tableNumber = order
+        ? state.tables.find((table) => table.id === order.tableId)?.number ?? "-"
+        : "-";
       return [
         `"${p.id}"`,
         `"${p.orderId || '-'}"`,
@@ -1976,7 +1977,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className={editingUser ? "" : "grid grid-cols-2 gap-4"}>
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-zinc-700">Usuario</label>
                   <input
@@ -1985,36 +1986,26 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                     placeholder="Ej: pedro"
                     value={staffUsername}
                     onChange={(e) => setStaffUsername(e.target.value)}
+                    disabled={Boolean(editingUser)}
                     className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950 font-medium"
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-zinc-700">{editingUser ? "Nueva contraseña (opcional)" : "Contraseña"}</label>
-                  <input
-                    type="password"
-                    autoComplete="new-password"
-                    placeholder={editingUser ? "Dejar igual" : "Contraseña segura"}
-                    value={staffPassword}
-                    onChange={(e) => setStaffPassword(e.target.value)}
-                    className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950 font-medium"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1.5">
+                {!editingUser && <div className="space-y-1.5">
                   <label className="text-xs font-bold text-zinc-700">
-                    {editingUser ? "Nuevo PIN (opcional)" : "PIN (4 números)"}
+                    Clave (4 números)
                   </label>
                   <input
                     type="password"
                     maxLength={4}
-                    placeholder={editingUser ? "Dejar igual" : "Ej: 5555"}
+                    placeholder="Ej: 5555"
                     value={staffPin}
                     onChange={(e) => setStaffPin(e.target.value.replace(/\D/g, ""))}
                     className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs text-center font-mono font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950"
                   />
-                </div>
+                </div>}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-bold text-zinc-700">Rol Principal</label>
                   <select

@@ -1,5 +1,5 @@
 import React from "react";
-import { Order, RestaurantState, PaymentMethod } from "../types";
+import { Order, RestaurantState, PaymentMethod, Shift } from "../types";
 
 interface ThermalReceiptProps {
   order: Order;

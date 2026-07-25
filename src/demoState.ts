@@ -9,21 +9,21 @@ import { ensureMinimumTables } from "./tableUtils";
 export const DEMO_STATE: RestaurantState = {
   "users": [
     {
-      "pin": "2222",
       "role": "WAITER",
+      "username": "juan",
       "name": "Juan (Mozo)",
       "id": "u1"
     },
     {
       "name": "Carlos (Cocina)",
       "id": "u2",
-      "pin": "3333",
+      "username": "carlos",
       "role": "KITCHEN"
     },
     {
       "name": "Don Ricardo (Admin)",
       "id": "u3",
-      "pin": "1234",
+      "username": "don",
       "role": "ADMIN"
     }
   ],

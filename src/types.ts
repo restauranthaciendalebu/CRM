@@ -62,7 +62,8 @@ export enum ShiftStatus {
 
 export interface User {
   id: string;
-  pin: string;
+  authUid?: string;
+  pin?: string;
   name: string;
   username?: string;
   password?: string;
@@ -148,6 +149,7 @@ export interface Order {
   billingTotal?: number;
   items: OrderItem[];
   customerPhone?: string; // linked customer if registered/found
+  customerUid?: string; // anonymous Firebase session used by QR orders
 }
 
 export interface Customer {
@@ -229,6 +231,7 @@ export interface Notification {
   createdAt: string;
   resolved: boolean;
   notes?: string;
+  requesterUid?: string;
 }
 
 export interface AuditLog {

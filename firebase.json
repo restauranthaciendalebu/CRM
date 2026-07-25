@@ -2,6 +2,34 @@
   "firestore": {
     "rules": "firestore.rules"
   },
+  "auth": {
+    "providers": {
+      "anonymous": true,
+      "emailPassword": true
+    },
+    "authorizedDomains": [
+      "localhost",
+      "restaurant-hacienda-santiago.firebaseapp.com",
+      "restaurant-hacienda-santiago.web.app",
+      "restauranthaciendalebu.github.io"
+    ]
+  },
+  "hosting": {
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "server.mjs",
+      "server.mjs.map"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
   "apphosting": [
     {
       "backendId": "restaurant-hacienda-backend",
