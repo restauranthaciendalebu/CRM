@@ -900,14 +900,6 @@ async function startServer() {
     let savedProduct: any = null;
     let errorMsg = "";
     LocalDb.updateState(state => {
-      if (isRecommended === true) {
-        const recommendedCount = state.products.filter(p => p.isRecommended && p.id !== id).length;
-        if (recommendedCount >= 5) {
-          errorMsg = "Solo puedes destacar hasta 5 platos recomendados.";
-          return;
-        }
-      }
-
       if (id) {
         // Edit
         const prod = state.products.find(p => p.id === id);

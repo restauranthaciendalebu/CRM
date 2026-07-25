@@ -498,11 +498,6 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
 
   const handleToggleRecommended = async (product: Product) => {
     const nextRecommended = !product.isRecommended;
-    const recommendedCount = state.products.filter(p => p.isRecommended).length;
-    if (nextRecommended && recommendedCount >= 5) {
-      window.alert("Solo puedes destacar hasta 5 platos recomendados.");
-      return;
-    }
 
     try {
       const res = await fetch("/api/products", {
@@ -658,11 +653,6 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     }
     if (prodPrice <= 0) {
       setProdError("El precio debe ser mayor a 0.");
-      return;
-    }
-    const recommendedCount = state.products.filter(p => p.isRecommended && p.id !== editingProductModal?.id).length;
-    if (prodIsRecommended && recommendedCount >= 5) {
-      setProdError("Solo puedes destacar hasta 5 platos recomendados.");
       return;
     }
     setIsProductSaving(true);
@@ -1030,10 +1020,10 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
             <div className="flex justify-between items-center mb-5">
               <div className="text-left">
                 <h3 className="font-bold text-zinc-900 text-sm">Hamburguesas, Carnes y Platos</h3>
-                <p className="text-xs text-zinc-400 mt-0.5">Controla precios, disponibilidad y hasta 5 platos recomendados para la carta pública.</p>
+                <p className="text-xs text-zinc-400 mt-0.5">Controla precios, disponibilidad y marca platos con la estrella ⭐ para destacarlos en el carrusel de Recomendaciones del Chef.</p>
                 <span className="inline-flex items-center gap-1.5 mt-2 text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
                   <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
-                  {state.products.filter(p => p.isRecommended).length}/5 recomendados
+                  {state.products.filter(p => p.isRecommended).length} Platos Recomendados del Chef
                 </span>
               </div>
               <button

@@ -370,6 +370,61 @@ ${menuHTML}
         </div>
       </div>
 
+      {/* ── Featured / Chef Recommendations Horizontal Carousel ── */}
+      {selectedCategory === "all" && !searchTerm && (
+        <div className="px-4 mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+            <h2 className="text-xs font-black uppercase tracking-[2px] text-amber-500">
+              Recomendaciones del Chef
+            </h2>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-2 pt-1 snap-x snap-mandatory scrollbar-none">
+            {(state.products.filter(p => p.isRecommended && p.isAvailable !== false).length > 0
+              ? state.products.filter(p => p.isRecommended && p.isAvailable !== false)
+              : state.products.slice(0, 5)
+            ).map((product) => (
+              <div
+                key={product.id}
+                onClick={() => setExpandedProduct(expandedProduct === product.id ? null : product.id)}
+                className="snap-start flex-shrink-0 w-64 bg-zinc-900/90 border border-zinc-800 rounded-2xl p-3 flex flex-col justify-between relative cursor-pointer active:scale-95 transition-all shadow-md"
+              >
+                <div>
+                  {product.imageUrl && (
+                    <div className="w-full h-32 rounded-xl overflow-hidden mb-2 bg-zinc-800 relative">
+                      <img
+                        src={getOptimizedImageUrl(product.imageUrl, 400)}
+                        alt={product.name}
+                        className="w-full h-full object-cover"
+                      />
+                      <span className="absolute top-2 left-2 bg-amber-500 text-zinc-950 text-[9px] font-black uppercase px-2 py-0.5 rounded-full flex items-center gap-1 shadow-sm">
+                        <Star className="w-3 h-3 fill-zinc-950" /> Recomendado
+                      </span>
+                    </div>
+                  )}
+                  <h3 className="font-bold text-sm text-zinc-100 line-clamp-1">{product.name}</h3>
+                  {product.description && (
+                    <p className="text-[11px] text-zinc-400 mt-1 line-clamp-2 leading-tight">{product.description}</p>
+                  )}
+                </div>
+                <div className="flex items-center justify-between mt-3 pt-2 border-t border-zinc-800/80">
+                  <span className="text-amber-500 font-black text-sm">{formatPrice(product.price)}</span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpandedProduct(product.id);
+                    }}
+                    className="bg-amber-500 text-zinc-950 font-bold text-xs px-3 py-1 rounded-xl flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Agregar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Menu content ── */}
       <div className="px-4 pb-40">
         {categoriesWithProducts.length === 0 ? (

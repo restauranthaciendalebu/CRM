@@ -1112,13 +1112,6 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
       await updateState(s => {
         if (!s.auditLogs) s.auditLogs = [];
-        if (isRecommended === true) {
-          const recommendedCount = s.products.filter(p => p.isRecommended && p.id !== id).length;
-          if (recommendedCount >= 5) {
-            errorMsg = "Solo puedes destacar hasta 5 platos recomendados.";
-            return;
-          }
-        }
 
         if (id) {
           const prod = s.products.find(p => p.id === id);

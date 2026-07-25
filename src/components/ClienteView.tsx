@@ -788,10 +788,10 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
           </div>
         )}
 
-        {/* RECOMENDACIONES DE NUESTRO CHEF */}
+        {/* RECOMENDACIONES DE NUESTRO CHEF — CARROUSEL HORIZONTAL */}
         {selectedCategory === "all" && !searchTerm && (
-          <div className="mt-10 mb-8" id="chef-specials-section">
-            <div className="flex items-center justify-between mb-5">
+          <div className="mt-8 mb-6" id="chef-specials-section">
+            <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="font-serif text-2xl font-bold text-stone-900 flex items-center gap-2">
                   <Award className="w-5 h-5 text-amber-500" /> {t.chefSpecials}
@@ -800,14 +800,17 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
               </div>
             </div>
             
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-              {products.filter(p => ["p4", "p5", "p2"].includes(p.id) && p.isAvailable).map(rawP => {
+            <div className="flex gap-4 overflow-x-auto pb-4 pt-1 snap-x snap-mandatory scrollbar-none">
+              {(products.filter(p => p.isRecommended && p.isAvailable !== false).length > 0
+                ? products.filter(p => p.isRecommended && p.isAvailable !== false)
+                : products.slice(0, 5)
+              ).map(rawP => {
                 const p = getTranslatedProductData(rawP);
                 return (
                   <div 
                     key={p.id}
                     onClick={() => handleOpenProductModal(rawP)}
-                    className="bg-white rounded-2xl overflow-hidden border border-stone-200/60 shadow-xs hover:shadow-md transition-all duration-300 flex flex-col cursor-pointer group text-left relative"
+                    className="snap-start flex-shrink-0 w-72 bg-white rounded-2xl overflow-hidden border border-stone-200/80 shadow-xs hover:shadow-md transition-all duration-300 flex flex-col cursor-pointer group text-left relative"
                   >
                     {p.imageUrl && (
                       <div className="h-44 w-full overflow-hidden relative bg-stone-100 flex-shrink-0">
@@ -822,7 +825,7 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                           height={352}
                         />
                         <div className="absolute top-3 left-3 bg-stone-950/90 backdrop-blur-md text-amber-400 font-bold tracking-widest text-[9px] uppercase px-2.5 py-1 rounded-full flex items-center gap-1 shadow-sm border border-amber-500/20">
-                          <Sparkles className="w-3 h-3 text-amber-400 fill-amber-400" /> {t.recommended}
+                          <Star className="w-3 h-3 text-amber-400 fill-amber-400" /> {t.recommended}
                         </div>
                         
                         {/* Interactive Favorite/Heart Button */}
@@ -851,11 +854,15 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                           <Star className="w-3 h-3 text-amber-500 fill-amber-500" /> {t.recetaHacienda}
                         </span>
                         
-                        {/* Favorite count counter */}
-                        <span className="font-bold flex items-center gap-1.5 text-stone-500">
-                          <Heart className="w-3 h-3 text-red-500 fill-red-500" />
-                          <span>{(likes[p.id] || 100).toLocaleString()}</span>
-                        </span>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenProductModal(rawP);
+                          }}
+                          className="bg-amber-500 hover:bg-amber-600 text-stone-950 font-extrabold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1 transition-all cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Agregar
+                        </button>
                       </div>
                     </div>
                   </div>
