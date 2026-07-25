@@ -110,8 +110,10 @@ export function subscribeToState(callback: (state: RestaurantState) => void) {
   };
 }
 
-function publishState(state: RestaurantState) {
-  currentCachedState = state;
+function publishState(state: RestaurantState, authoritative = true) {
+  // Optimistic UI updates must never replace the Firestore-backed source used
+  // by updateState, or the transaction will think the change already happened.
+  if (authoritative) currentCachedState = state;
   const clientStateJson = JSON.stringify(
     state,
     (key, value) => (key === "pin" || key === "password") ? "" : value
@@ -129,7 +131,7 @@ export function applyLocalStateUpdate(mutator: (state: RestaurantState) => void)
   if (!currentCachedState) return;
   const nextState = JSON.parse(JSON.stringify(currentCachedState)) as RestaurantState;
   mutator(nextState);
-  publishState(nextState);
+  publishState(nextState, false);
 }
 
 export async function refreshStateFromServer() {
