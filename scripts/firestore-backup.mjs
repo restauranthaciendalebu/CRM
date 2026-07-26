@@ -126,12 +126,19 @@ for (const collectionId of collectionIds) {
   collections[collectionId] = await listCollectionDocuments(collectionId, accessToken);
 }
 
-if (!collections.settings?.some((document) => document.id === "restaurant_state")) {
-  throw new Error("Backup validation failed: settings/restaurant_state was not found.");
+const requiredCollections = ["users", "tables", "products", "access", "staffDirectory"];
+const missingCollections = requiredCollections.filter(
+  (collectionId) => !Array.isArray(collections[collectionId]) || collections[collectionId].length === 0,
+);
+if (missingCollections.length > 0) {
+  throw new Error(
+    `Backup validation failed. Missing current collections: ${missingCollections.join(", ")}.`,
+  );
 }
 
 const backup = {
-  formatVersion: 1,
+  formatVersion: 2,
+  backupType: "firestore-collections",
   source: {
     projectId,
     databaseId,

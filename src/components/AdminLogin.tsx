@@ -28,6 +28,8 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
       if (res.ok) {
         const user = (await res.json()) as User;
         if (user.role === "ADMIN" || (user.permissions && user.permissions.length > 0)) {
+          setUsername("");
+          setPassword("");
           onLoginSuccess(user);
         } else {
           setLoginError("Acceso denegado. No tienes permisos para ingresar a este panel.");
@@ -64,12 +66,12 @@ export default function AdminLogin({ onLoginSuccess, onLoginError }: AdminLoginP
           </span>
         )}
 
-        <form onSubmit={validateAdminCredentials} className="w-full space-y-4 mt-7">
+        <form onSubmit={validateAdminCredentials} autoComplete="off" className="w-full space-y-4 mt-7">
           <label className="block text-xs font-bold text-zinc-400">Usuario
-            <input value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" autoComplete="username" className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500" placeholder="Ej: admin" disabled={isValidating} />
+            <input value={username} onChange={(e) => setUsername(e.target.value)} autoCapitalize="none" autoComplete="off" className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500" placeholder="Ej: admin" disabled={isValidating} />
           </label>
           <label className="block text-xs font-bold text-zinc-400">Contraseña
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500" placeholder="Ingresa tu contraseña" disabled={isValidating} />
+            <input name="hacienda-admin-session-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500" placeholder="Ingresa tu contraseña" disabled={isValidating} />
           </label>
           <button type="submit" disabled={isValidating || !username.trim() || !password} className="w-full rounded-xl bg-emerald-600 py-3.5 font-bold text-white transition-all hover:bg-emerald-500 disabled:opacity-50">
             {isValidating ? "Verificando..." : "Ingresar al panel"}

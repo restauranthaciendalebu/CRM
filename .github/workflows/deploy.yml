@@ -30,7 +30,13 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Validate TypeScript
+        run: npm run lint
+
+      - name: Run regression tests
+        run: npm test
 
       - name: Build frontend
         env:

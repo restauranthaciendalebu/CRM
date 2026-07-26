@@ -253,6 +253,31 @@ export interface InventoryTransaction {
   createdAt: string;
 }
 
+export type RecoverableCollection =
+  | "users"
+  | "tables"
+  | "categories"
+  | "products"
+  | "ingredients"
+  | "orders"
+  | "customers"
+  | "loyaltyTxs"
+  | "promotions"
+  | "payments"
+  | "reservations"
+  | "shifts"
+  | "notifications";
+
+export interface RecoveryRecord {
+  id: string;
+  collection: RecoverableCollection;
+  documentId: string;
+  operation: "UPDATE" | "DELETE";
+  snapshot: Record<string, unknown>;
+  createdAt: string;
+  actorUid?: string;
+}
+
 export interface RestaurantState {
   users: User[];
   tables: Table[];
@@ -269,5 +294,6 @@ export interface RestaurantState {
   notifications: Notification[];
   auditLogs?: AuditLog[];
   inventoryTransactions?: InventoryTransaction[];
+  recoveryArchive?: RecoveryRecord[];
   onlyViewMenuQr?: boolean;
 }

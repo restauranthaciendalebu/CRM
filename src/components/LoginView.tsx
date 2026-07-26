@@ -28,6 +28,8 @@ export default function LoginView({ onLoginSuccess, state }: LoginViewProps) {
 
       if (res.ok) {
         const user = (await res.json()) as User;
+        setUsername("");
+        setPassword("");
         onLoginSuccess(user);
       } else {
         const err = await res.json();
@@ -62,12 +64,12 @@ export default function LoginView({ onLoginSuccess, state }: LoginViewProps) {
           </span>
         )}
 
-        <form onSubmit={validateCredentials} className="w-full space-y-4 mt-7">
+        <form onSubmit={validateCredentials} autoComplete="off" className="w-full space-y-4 mt-7">
           <label className="block text-xs font-bold text-zinc-400">Usuario
             <select
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
+              autoComplete="off"
               className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500"
               disabled={isValidating}
             >
@@ -78,7 +80,7 @@ export default function LoginView({ onLoginSuccess, state }: LoginViewProps) {
             </select>
           </label>
           <label className="block text-xs font-bold text-zinc-400">Contraseña
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500" placeholder="Ingresa tu contraseña" disabled={isValidating} />
+            <input name="hacienda-session-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 text-white outline-none focus:border-amber-500" placeholder="Ingresa tu contraseña" disabled={isValidating} />
           </label>
           <button type="submit" disabled={isValidating || !username.trim() || !password} className="w-full rounded-xl bg-emerald-600 py-3.5 font-bold text-white transition-all hover:bg-emerald-500 disabled:opacity-50">
             {isValidating ? "Verificando..." : "Ingresar"}

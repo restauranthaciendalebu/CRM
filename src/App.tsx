@@ -164,8 +164,8 @@ function AppContent() {
     <div className="min-h-screen bg-zinc-100 flex flex-col" id="restaurant-hacienda-app-root">
       {!isOnline && (
         <div className="bg-amber-600 text-white text-xs font-bold text-center py-2 px-4 flex items-center justify-center gap-2 shadow-md z-50">
-          <span>📶 MODO RESISTENTE SIN CONEXIÓN DE RED</span>
-          <span className="font-normal opacity-90 hidden sm:inline">— Operando con memoria local de respaldo. Se sincronizará al restablecer la red.</span>
+          <span>SIN CONEXIÓN</span>
+          <span className="font-normal opacity-90 hidden sm:inline">No realices cobros ni cambios hasta recuperar la señal.</span>
         </div>
       )}
 

@@ -32,13 +32,17 @@ import {
   OrderItem,
   Table,
   Customer,
-  User
+  User,
+  RecoveryRecord,
+  RecoverableCollection,
 } from "./types";
 import { DEMO_STATE } from "./demoState";
 import { isDirectServiceProduct } from "./orderUtils";
 import { recalculateOrderStatus, restoreOrderItemStock } from "./orderItemMutationUtils";
 import { createTable, ensureMinimumTables } from "./tableUtils";
 import { getRemainingBalance } from "./billingUtils";
+import { parseAndValidateBackup } from "./backupUtils";
+import { shouldArchiveEntityChange } from "./recoveryUtils";
 
 // Cache local of the database state
 let currentCachedState: RestaurantState | null = null;
@@ -46,6 +50,8 @@ let currentClientState: RestaurantState | null = null;
 let currentClientStateJson = "";
 let stateListeners: ((state: RestaurantState) => void)[] = [];
 let firestoreUnsubscribers: Array<() => void> = [];
+let subscriptionGeneration = 0;
+let canReadRecoveryArchive = false;
 
 const COLLECTION_FIELDS = [
   "users",
@@ -63,10 +69,39 @@ const COLLECTION_FIELDS = [
   "notifications",
   "auditLogs",
   "inventoryTransactions",
+  "recoveryArchive",
 ] as const;
 type CollectionField = typeof COLLECTION_FIELDS[number];
 
 const PUBLIC_COLLECTIONS = ["tables", "categories", "products"] as const;
+const WAITER_COLLECTIONS = COLLECTION_FIELDS.filter((field) => field !== "recoveryArchive");
+const KITCHEN_COLLECTIONS: CollectionField[] = [
+  "users",
+  "tables",
+  "categories",
+  "products",
+  "ingredients",
+  "orders",
+  "notifications",
+  "auditLogs",
+  "inventoryTransactions",
+  "promotions",
+];
+const RECOVERABLE_COLLECTIONS = new Set<RecoverableCollection>([
+  "users",
+  "tables",
+  "categories",
+  "products",
+  "ingredients",
+  "orders",
+  "customers",
+  "loyaltyTxs",
+  "promotions",
+  "payments",
+  "reservations",
+  "shifts",
+  "notifications",
+]);
 
 function createEmptyState(): RestaurantState {
   return {
@@ -85,6 +120,7 @@ function createEmptyState(): RestaurantState {
     notifications: [],
     auditLogs: [],
     inventoryTransactions: [],
+    recoveryArchive: [],
     onlyViewMenuQr: false,
   };
 }
@@ -134,11 +170,25 @@ export function applyLocalStateUpdate(mutator: (state: RestaurantState) => void)
   publishState(nextState, false);
 }
 
+async function getReadableCollections(): Promise<readonly CollectionField[]> {
+  const currentUser = auth.currentUser;
+  if (!currentUser || currentUser.isAnonymous) {
+    canReadRecoveryArchive = false;
+    return PUBLIC_COLLECTIONS;
+  }
+  const accessSnapshot = await getDoc(doc(db, "access", currentUser.uid));
+  const role = accessSnapshot.data()?.role as Role | undefined;
+  canReadRecoveryArchive = role === Role.ADMIN;
+  if (role === Role.ADMIN) return COLLECTION_FIELDS;
+  if (role === Role.WAITER) return WAITER_COLLECTIONS;
+  if (role === Role.KITCHEN) return KITCHEN_COLLECTIONS;
+  return PUBLIC_COLLECTIONS;
+}
+
 export async function refreshStateFromServer() {
   if (!currentCachedState) return;
   const next = cloneState(currentCachedState);
-  const isStaff = Boolean(auth.currentUser && !auth.currentUser.isAnonymous);
-  const fields = isStaff ? COLLECTION_FIELDS : PUBLIC_COLLECTIONS;
+  const fields = await getReadableCollections();
   await Promise.all(fields.map(async (field) => {
     const snapshot = await getDocs(collection(db, field));
     (next as any)[field] = snapshot.docs.map((item) => item.data());
@@ -151,14 +201,17 @@ export async function refreshStateFromServer() {
   publishState(next);
 }
 
-function startFirestoreSubscriptions() {
+async function startFirestoreSubscriptions() {
+  const generation = ++subscriptionGeneration;
   firestoreUnsubscribers.forEach((unsubscribe) => unsubscribe());
   firestoreUnsubscribers = [];
   const next = createEmptyState();
   const currentUser = auth.currentUser;
   const isStaff = Boolean(currentUser && !currentUser.isAnonymous);
+  const readableFields = await getReadableCollections();
+  if (generation !== subscriptionGeneration) return;
   const required = new Set<string>([...PUBLIC_COLLECTIONS, "staffDirectory", "config"]);
-  if (isStaff) COLLECTION_FIELDS.forEach((field) => required.add(field));
+  if (isStaff) readableFields.forEach((field) => required.add(field));
   if (currentUser?.isAnonymous) required.add("orders");
   const loaded = new Set<string>();
 
@@ -174,6 +227,9 @@ function startFirestoreSubscriptions() {
     firestoreUnsubscribers.push(onSnapshot(collection(db, field), (snapshot) => {
       (next as any)[field] = snapshot.docs.map((item) => item.data());
       commit(field);
+    }, (error) => {
+      console.error(`No se pudo leer ${field}`, error);
+      commit(field);
     }));
   }
 
@@ -182,21 +238,30 @@ function startFirestoreSubscriptions() {
       next.users = snapshot.docs.map((item) => item.data() as User);
     }
     commit("staffDirectory");
+  }, (error) => {
+    console.error("No se pudo leer el directorio de personal", error);
+    commit("staffDirectory");
   }));
 
   firestoreUnsubscribers.push(onSnapshot(doc(db, "config", "restaurant"), (snapshot) => {
     next.onlyViewMenuQr = Boolean(snapshot.data()?.onlyViewMenuQr);
     commit("config");
+  }, (error) => {
+    console.error("No se pudo leer la configuración", error);
+    commit("config");
   }));
 
   if (isStaff) {
-    for (const field of COLLECTION_FIELDS) {
+    for (const field of readableFields) {
       if ((PUBLIC_COLLECTIONS as readonly string[]).includes(field)) {
         commit(field);
         continue;
       }
       firestoreUnsubscribers.push(onSnapshot(collection(db, field), (snapshot) => {
         (next as any)[field] = snapshot.docs.map((item) => item.data());
+        commit(field);
+      }, (error) => {
+        console.error(`No se pudo leer ${field}`, error);
         commit(field);
       }));
     }
@@ -208,12 +273,15 @@ function startFirestoreSubscriptions() {
     firestoreUnsubscribers.push(onSnapshot(ownOrders, (snapshot) => {
       next.orders = snapshot.docs.map((item) => item.data() as Order);
       commit("orders");
+    }, (error) => {
+      console.error("No se pudieron leer los pedidos del cliente", error);
+      commit("orders");
     }));
   }
 }
 
 onAuthStateChanged(auth, (user) => {
-  startFirestoreSubscriptions();
+  void startFirestoreSubscriptions();
   if (!user && new URLSearchParams(window.location.search).has("mesa")) {
     void signInAnonymously(auth);
   }
@@ -225,6 +293,29 @@ type StateChange = {
   before?: any;
   after?: any;
 };
+
+function shouldArchiveChange(change: StateChange) {
+  if (!RECOVERABLE_COLLECTIONS.has(change.field as RecoverableCollection)) {
+    return false;
+  }
+  return shouldArchiveEntityChange(
+    change.field as RecoverableCollection,
+    change.before,
+    change.after,
+  );
+}
+
+function createRecoveryRecord(change: StateChange): RecoveryRecord {
+  return {
+    id: `recovery_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
+    collection: change.field as RecoverableCollection,
+    documentId: change.id,
+    operation: change.after ? "UPDATE" : "DELETE",
+    snapshot: JSON.parse(JSON.stringify(change.before)),
+    createdAt: new Date().toISOString(),
+    actorUid: auth.currentUser?.uid,
+  };
+}
 
 function diffState(before: RestaurantState, after: RestaurantState): StateChange[] {
   const changes: StateChange[] = [];
@@ -278,6 +369,9 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
     const candidate = cloneState(remoteBase);
     mutator(candidate);
     const finalChanges = diffState(remoteBase, candidate);
+    const recoveryRecords = finalChanges
+      .filter(shouldArchiveChange)
+      .map(createRecoveryRecord);
     const readPaths = new Set(existingChanges.map((change) => `${change.field}/${change.id}`));
     for (const change of finalChanges) {
       const path = `${change.field}/${change.id}`;
@@ -291,10 +385,22 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
         transaction.delete(reference);
       }
     }
+    for (const recoveryRecord of recoveryRecords) {
+      transaction.set(
+        doc(db, "recoveryArchive", recoveryRecord.id),
+        JSON.parse(JSON.stringify(recoveryRecord)),
+      );
+    }
     if (remoteBase.onlyViewMenuQr !== candidate.onlyViewMenuQr) {
       transaction.set(doc(db, "config", "restaurant"), {
         onlyViewMenuQr: Boolean(candidate.onlyViewMenuQr),
       });
+    }
+    if (canReadRecoveryArchive) {
+      candidate.recoveryArchive = [
+        ...(candidate.recoveryArchive || []),
+        ...recoveryRecords,
+      ];
     }
     return candidate;
   });
@@ -1724,17 +1830,72 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       return createResponse({ success: true, shift: closedShift });
     }
 
+    const recoveryRestoreMatch = path.match(/^\/api\/admin\/recovery\/([^\/]+)\/restore$/);
+    if (recoveryRestoreMatch && method === "POST") {
+      await assertCurrentAdmin();
+      const recoveryId = recoveryRestoreMatch[1];
+      let restoredRecord: RecoveryRecord | undefined;
+      const updated = await updateState(s => {
+        const record = (s.recoveryArchive || []).find(candidate => candidate.id === recoveryId);
+        if (!record) return;
+        restoredRecord = record;
+        const records = [...((s as any)[record.collection] || [])];
+        const existingIndex = records.findIndex((item: { id?: string }) => item.id === record.documentId);
+        const snapshot = JSON.parse(JSON.stringify(record.snapshot));
+        if (existingIndex >= 0) records[existingIndex] = snapshot;
+        else records.push(snapshot);
+        (s as any)[record.collection] = records;
+        s.auditLogs = s.auditLogs || [];
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          userName: typeof body.operatorName === "string" ? body.operatorName : "Administrador",
+          action: "Registro Recuperado",
+          details: `Se restauró ${record.collection}/${record.documentId} desde la papelera protegida.`,
+          createdAt: new Date().toISOString(),
+        });
+      });
+      if (!restoredRecord) return createResponse({ error: "Copia de recuperación no encontrada." }, 404);
+      return createResponse({
+        success: true,
+        restored: `${restoredRecord.collection}/${restoredRecord.documentId}`,
+        state: updated,
+      });
+    }
+
     // 15. Import Backup DB
     if (path === "/api/admin/db/import" && method === "POST") {
-      const { state: importedState } = body;
+      await assertCurrentAdmin();
+      const importedState = parseAndValidateBackup(body.backup ?? body.state);
+      if (importedState.users.some(user => !user.authUid)) {
+        return createResponse({
+          error: "El respaldo contiene usuarios antiguos sin identidad de acceso y no se puede restaurar de forma segura.",
+        }, 400);
+      }
+      const projected = cloneState(currentCachedState || createEmptyState());
+      for (const field of COLLECTION_FIELDS) {
+        if (field === "auditLogs" || field === "recoveryArchive") continue;
+        (projected as any)[field] = cloneState(importedState)[field] || [];
+      }
+      projected.onlyViewMenuQr = Boolean(importedState.onlyViewMenuQr);
+      const projectedChanges = diffState(currentCachedState || createEmptyState(), projected);
+      const projectedArchives = projectedChanges.filter(shouldArchiveChange).length;
+      if (projectedChanges.length + projectedArchives > 450) {
+        return createResponse({
+          error: "El respaldo es demasiado grande para restaurarlo de forma segura desde el navegador. Usa la herramienta administrativa de migración.",
+        }, 400);
+      }
+
       const updated = await updateState(s => {
-        Object.keys(importedState).forEach(key => {
-          (s as any)[key] = importedState[key];
-        });
+        for (const field of COLLECTION_FIELDS) {
+          if (field === "auditLogs" || field === "recoveryArchive") continue;
+          (s as any)[field] = cloneState(importedState)[field] || [];
+        }
+        s.onlyViewMenuQr = Boolean(importedState.onlyViewMenuQr);
+        s.auditLogs = s.auditLogs || [];
         s.auditLogs.push({
           id: "audit_" + Math.random().toString(36).substring(2, 11),
           action: "Restauración de Respaldo",
-          details: "Se restauró una copia de respaldo completa de la base de datos de manera exitosa.",
+          details: "Se restauró una copia validada. La auditoría y la papelera anteriores se conservaron.",
           createdAt: new Date().toISOString()
         });
       });

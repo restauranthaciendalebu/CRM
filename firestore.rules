@@ -50,7 +50,7 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isStaff();
-      allow write: if isAdmin();
+      allow create, update, delete: if isAdmin();
     }
 
     match /categories/{categoryId} {
@@ -70,7 +70,8 @@ service cloud.firestore {
 
     match /tables/{tableId} {
       allow read: if true;
-      allow write: if isAdmin() || isWaiter();
+      allow create, update: if isAdmin() || isWaiter();
+      allow delete: if isAdmin();
       allow update: if isAnonymous()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status"])
         && request.resource.data.status in ["OCCUPIED", "BILL_REQUESTED"];
@@ -117,33 +118,40 @@ service cloud.firestore {
     }
 
     match /customers/{customerId} {
-      allow read, write: if isAdmin() || isWaiter();
+      allow read, create, update: if isAdmin() || isWaiter();
+      allow delete: if isAdmin();
     }
 
     match /loyaltyTxs/{transactionId} {
-      allow read, write: if isAdmin() || isWaiter();
+      allow read, create, update: if isAdmin() || isWaiter();
+      allow delete: if isAdmin();
     }
 
     match /payments/{paymentId} {
-      allow read, write: if isAdmin() || isWaiter();
+      allow read, create, update: if isAdmin() || isWaiter();
+      allow delete: if isAdmin();
     }
 
     match /reservations/{reservationId} {
-      allow read, write: if isAdmin() || isWaiter();
+      allow read, create, update: if isAdmin() || isWaiter();
+      allow delete: if isAdmin();
     }
 
     match /shifts/{shiftId} {
-      allow read, write: if isAdmin() || isWaiter();
+      allow read, create, update: if isAdmin() || isWaiter();
+      allow delete: if isAdmin();
     }
 
     match /ingredients/{ingredientId} {
       allow read: if isStaff();
-      allow write: if isAdmin() || isWaiter();
+      allow create, update: if isAdmin() || isWaiter();
+      allow delete: if isAdmin();
     }
 
     match /inventoryTransactions/{transactionId} {
       allow read: if isStaff();
-      allow write: if isAdmin() || isWaiter();
+      allow create, update: if isAdmin() || isWaiter();
+      allow delete: if isAdmin();
     }
 
     match /promotions/{promotionId} {
@@ -160,7 +168,47 @@ service cloud.firestore {
         && (!("details" in request.resource.data)
           || (request.resource.data.details is string
             && request.resource.data.details.size() <= 2000));
-      allow update, delete: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /recoveryArchive/{recordId} {
+      allow read: if isAdmin();
+      allow create: if isStaff()
+        && request.resource.data.keys().hasOnly([
+          "id",
+          "collection",
+          "documentId",
+          "operation",
+          "snapshot",
+          "createdAt",
+          "actorUid"
+        ])
+        && request.resource.data.id == recordId
+        && request.resource.data.collection in [
+          "users",
+          "tables",
+          "categories",
+          "products",
+          "ingredients",
+          "orders",
+          "customers",
+          "loyaltyTxs",
+          "promotions",
+          "payments",
+          "reservations",
+          "shifts",
+          "notifications"
+        ]
+        && request.resource.data.documentId is string
+        && request.resource.data.documentId.size() > 0
+        && request.resource.data.documentId.size() <= 160
+        && request.resource.data.operation in ["UPDATE", "DELETE"]
+        && request.resource.data.snapshot is map
+        && request.resource.data.snapshot.id == request.resource.data.documentId
+        && request.resource.data.createdAt is string
+        && request.resource.data.createdAt.size() <= 40
+        && request.resource.data.actorUid == request.auth.uid;
+      allow update, delete: if false;
     }
 
     match /system/{documentId} {

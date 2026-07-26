@@ -13,8 +13,14 @@ import {
   Payment,
   PaymentMethod,
   User,
-  Role
+  Role,
+  RecoveryRecord
 } from "../types";
+import {
+  createBackupEnvelope,
+  getBackupRecordCount,
+  parseAndValidateBackup,
+} from "../backupUtils";
 import { 
   TrendingUp, 
   DollarSign, 
@@ -102,6 +108,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [isStaffSaving, setIsStaffSaving] = useState(false);
   const [isAddTableOpen, setIsAddTableOpen] = useState(false);
   const [tableNotice, setTableNotice] = useState("");
+  const [restoringRecoveryId, setRestoringRecoveryId] = useState<string | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState("");
 
   // Product management state
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
@@ -143,6 +151,45 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   }, []);
 
   const formatCLP = (val: number) => "$" + Math.round(val).toLocaleString("es-CL");
+  const downloadStateBackup = (label = "") => {
+    const envelope = createBackupEnvelope(state);
+    const blob = new Blob([JSON.stringify(envelope, null, 2)], {
+      type: "application/json;charset=utf-8",
+    });
+    const url = URL.createObjectURL(blob);
+    const downloadAnchor = document.createElement("a");
+    const suffix = label ? `_${label}` : "";
+    downloadAnchor.href = url;
+    downloadAnchor.download = `hacienda_db_backup_${new Date().toISOString().replace(/[:.]/g, "-")}${suffix}.json`;
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const restoreRecoveryRecord = async (record: RecoveryRecord) => {
+    const confirmed = window.confirm(
+      `Se restaurará ${record.collection}/${record.documentId}. El estado actual también quedará protegido. ¿Continuar?`,
+    );
+    if (!confirmed) return;
+    setRestoringRecoveryId(record.id);
+    setRecoveryNotice("");
+    try {
+      const response = await fetch(`/api/admin/recovery/${record.id}/restore`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operatorName: activeUser?.name || "Administrador" }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "No se pudo restaurar el registro.");
+      setRecoveryNotice(`Restaurado: ${payload.restored}.`);
+      onRefreshState();
+    } catch (error) {
+      setRecoveryNotice(error instanceof Error ? error.message : "No se pudo restaurar el registro.");
+    } finally {
+      setRestoringRecoveryId(null);
+    }
+  };
   const creditLabelText = (label?: Customer["creditLabel"]) => {
     const labels: Record<string, string> = {
       OWNER: "Dueño",
@@ -763,15 +810,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
 
         <div className="flex flex-wrap gap-2">
           <button
-            onClick={() => {
-              const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
-              const downloadAnchor = document.createElement('a');
-              downloadAnchor.setAttribute("href", dataStr);
-              downloadAnchor.setAttribute("download", `hacienda_db_backup_${new Date().toISOString().split('T')[0]}.json`);
-              document.body.appendChild(downloadAnchor);
-              downloadAnchor.click();
-              downloadAnchor.remove();
-            }}
+            onClick={() => downloadStateBackup()}
             className="px-3 py-2 bg-amber-500 hover:bg-amber-600 text-zinc-950 font-black text-xs rounded-xl flex items-center gap-1.5 shadow-md cursor-pointer transition-all"
             title="Descargar copia de seguridad completa del sistema"
           >
@@ -1737,15 +1776,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
               </div>
 
               <button
-                onClick={() => {
-                  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
-                  const downloadAnchor = document.createElement('a');
-                  downloadAnchor.setAttribute("href", dataStr);
-                  downloadAnchor.setAttribute("download", `hacienda_db_backup_${new Date().toISOString().split('T')[0]}.json`);
-                  document.body.appendChild(downloadAnchor);
-                  downloadAnchor.click();
-                  downloadAnchor.remove();
-                }}
+                onClick={() => downloadStateBackup()}
                 className="w-full flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-2.5 px-4 rounded-xl text-xs transition-all cursor-pointer shadow-sm"
               >
                 <Download className="w-4 h-4" /> Exportar Respaldo (JSON)
@@ -1771,13 +1802,18 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                     reader.onload = async (event) => {
                       try {
                         const parsed = JSON.parse(event.target?.result as string);
-                        const confirmRestore = window.confirm("¿Estás seguro de que deseas restaurar este respaldo? Se sobrescribirá el estado actual del restaurant por completo.");
-                        if (!confirmRestore) return;
+                        const validatedState = parseAndValidateBackup(parsed);
+                        const recordCount = getBackupRecordCount(validatedState);
+                        const confirmation = window.prompt(
+                          `Respaldo válido: ${recordCount} registros. Se descargará primero una copia del estado actual. Escribe RESTAURAR para continuar.`,
+                        );
+                        if (confirmation !== "RESTAURAR") return;
+                        downloadStateBackup("antes-de-restaurar");
 
                         const res = await fetch("/api/admin/db/import", {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ state: parsed })
+                          body: JSON.stringify({ backup: parsed })
                         });
                         
                         if (res.ok) {
@@ -1788,7 +1824,9 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                           alert("Error al restaurar: " + errData.error);
                         }
                       } catch (err) {
-                        alert("El archivo no es un JSON de base de datos válido.");
+                        alert(err instanceof Error ? err.message : "El archivo no es un respaldo válido.");
+                      } finally {
+                        e.target.value = "";
                       }
                     };
                     reader.readAsText(file);
@@ -1801,6 +1839,67 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
             </div>
 
             <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm md:col-span-2 space-y-4 text-left">
+              <div className="space-y-3 pb-4 border-b border-zinc-100">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-bold text-zinc-900 text-sm flex items-center gap-1.5">
+                      <Shield className="w-4 h-4 text-emerald-600" /> Papelera Protegida
+                    </h3>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      Copias automáticas creadas antes de eliminar o reducir información crítica.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-extrabold text-zinc-500 bg-zinc-100 px-2 py-1 rounded">
+                    {(state.recoveryArchive || []).length} copias
+                  </span>
+                </div>
+
+                {recoveryNotice && (
+                  <p className={`text-xs font-bold px-3 py-2 rounded border ${
+                    recoveryNotice.startsWith("Restaurado:")
+                      ? "text-emerald-800 bg-emerald-50 border-emerald-200"
+                      : "text-red-700 bg-red-50 border-red-200"
+                  }`}>
+                    {recoveryNotice}
+                  </p>
+                )}
+
+                <div className="max-h-56 overflow-y-auto space-y-2 pr-1">
+                  {(state.recoveryArchive || []).length > 0 ? (
+                    [...(state.recoveryArchive || [])]
+                      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+                      .slice(0, 30)
+                      .map((record) => (
+                        <div
+                          key={record.id}
+                          className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border border-zinc-200 bg-zinc-50 p-3 rounded"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs font-extrabold text-zinc-900 truncate">
+                              {record.collection} / {record.documentId}
+                            </p>
+                            <p className="text-[10px] text-zinc-500">
+                              {record.operation === "DELETE" ? "Eliminación" : "Cambio crítico"} · {new Date(record.createdAt).toLocaleString("es-CL")}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => restoreRecoveryRecord(record)}
+                            disabled={restoringRecoveryId === record.id}
+                            className="shrink-0 inline-flex items-center justify-center gap-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:bg-zinc-300 text-white text-[10px] font-extrabold px-3 py-2 rounded cursor-pointer disabled:cursor-not-allowed"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${restoringRecoveryId === record.id ? "animate-spin" : ""}`} />
+                            Restaurar
+                          </button>
+                        </div>
+                      ))
+                  ) : (
+                    <p className="text-xs text-zinc-400 py-4 text-center">
+                      Todavía no hay registros eliminados para recuperar.
+                    </p>
+                  )}
+                </div>
+              </div>
+
               <div className="flex justify-between items-center pb-2 border-b border-zinc-100">
                 <div>
                   <h3 className="font-bold text-zinc-900 text-sm flex items-center gap-1.5">
