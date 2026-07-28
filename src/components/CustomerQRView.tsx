@@ -50,18 +50,14 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
   const activeTable = state.tables.find((t) => t.number === tableNumber);
   const activeTableId = activeTable?.id;
 
-  // Derived state: check if there are delivered orders at this table
-  const tableOrders = state.orders.filter((o) => o.tableId === activeTableId);
-  const hasDeliveredOrder = tableOrders.some(
-    (o) => o.status === OrderStatus.DELIVERED || o.status === OrderStatus.CLOSED
+  // Derived state: check if there are ACTIVE open orders at this table (closed orders are strictly excluded for privacy)
+  const tableOrders = state.orders.filter(
+    (o) => o.tableId === activeTableId && o.status !== OrderStatus.CLOSED
   );
-  const closedOrder = [...tableOrders]
-    .filter((order) => order.status === OrderStatus.CLOSED)
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
-  const closedOrderPayments = closedOrder
-    ? state.payments.filter((payment) => payment.orderId === closedOrder.id)
-    : [];
-  const closedOrderTotal = closedOrderPayments.reduce((sum, payment) => sum + payment.amount, 0);
+  const hasDeliveredOrder = tableOrders.some(
+    (o) => o.status === OrderStatus.DELIVERED
+  );
+  const closedOrder = null;
 
   // Derived state: check if there's a pending (unresolved) CALL_WAITER notification for this table
   const hasPendingWaiterCall = state.notifications.some(
@@ -585,57 +581,7 @@ ${menuHTML}
         </p>
       </div>
 
-      {showReceipt && closedOrder && (
-        <div className="fixed inset-0 z-[80] bg-black/70 p-4 flex items-end sm:items-center justify-center">
-          <div className="w-full max-w-md max-h-[88vh] overflow-y-auto bg-white text-zinc-900 rounded-3xl shadow-2xl p-5">
-            <div className="flex items-start justify-between border-b border-zinc-200 pb-4">
-              <div>
-                <span className="text-[10px] uppercase tracking-[3px] text-amber-700 font-black">Boleta de consumo</span>
-                <h2 className="text-xl font-black mt-1">Restaurant Hacienda</h2>
-                <p className="text-xs text-zinc-500 mt-1">Mesa {tableNumber} · {new Date(closedOrder.updatedAt).toLocaleString("es-CL")}</p>
-              </div>
-              <button onClick={() => setShowReceipt(false)} className="p-2 text-zinc-500 hover:text-zinc-900" aria-label="Cerrar boleta">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            <div className="py-4 space-y-3">
-              {closedOrder.items.map((item) => {
-                const product = state.products.find((candidate) => candidate.id === item.productId);
-                if (!product) return null;
-                const modifiers = item.selectedModifiers?.reduce((sum, modifier) => sum + modifier.extraPrice, 0) || 0;
-                return (
-                  <div key={item.id} className="flex justify-between gap-3 text-sm">
-                    <span><strong>{item.quantity}x</strong> {product.name}</span>
-                    <span className="font-bold whitespace-nowrap">{formatReceiptPrice((product.price + modifiers) * item.quantity)}</span>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="border-t border-zinc-200 pt-3 space-y-2">
-              {closedOrderPayments.map((payment) => (
-                <div key={payment.id} className="flex justify-between text-xs text-zinc-500">
-                  <span>{paymentMethodLabel(payment.method)}</span>
-                  <span>{formatReceiptPrice(payment.amount)}</span>
-                </div>
-              ))}
-              <div className="flex justify-between text-lg font-black pt-2">
-                <span>Total</span>
-                <span>{formatReceiptPrice(closedOrderTotal)}</span>
-              </div>
-            </div>
-
-            <p className="text-center text-[10px] text-zinc-400 mt-5">Gracias por preferir Restaurant Hacienda</p>
-            <button
-              onClick={() => window.print()}
-              className="w-full mt-4 bg-zinc-900 text-white rounded-xl py-3 font-bold text-sm"
-            >
-              Imprimir o guardar PDF
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ── Scroll to top ── */}
       {showScrollTop && (
