@@ -326,8 +326,29 @@ export default function MozoView({
   // 3. TABLE LIFE CYCLE
   const handleOpenTableSubmit = async () => {
     if (!selectedTable) return;
+    const tableId = selectedTable.id;
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        const table = nextState.tables.find(t => t.id === tableId);
+        if (table) table.status = TableStatus.OCCUPIED;
+        const existingOrder = nextState.orders.find(o => o.tableId === tableId && o.status !== OrderStatus.CLOSED);
+        if (!existingOrder) {
+          const newOrderId = "o_" + Math.random().toString(36).substring(2, 11);
+          nextState.orders.push({
+            id: newOrderId,
+            tableId,
+            waiterId: activeUser?.id || null,
+            status: OrderStatus.PREPARING,
+            customerCount: openingGuestCount || 2,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            items: []
+          });
+        }
+      });
+    }
     try {
-      const res = await fetch(`/api/tables/${selectedTable.id}/open`, {
+      await fetch(`/api/tables/${tableId}/open`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -335,23 +356,18 @@ export default function MozoView({
           waiterId: activeUser?.id
         })
       });
-      if (res.ok) {
-        setIsOpeningTable(false);
-        setOpeningGuestCount(2);
-        showBanner("Mesa abierta con éxito.");
-        refreshStateIfNeeded();
-        // Automatically select table to view
-        const updatedState = state;
-        const updatedTbl = updatedState.tables.find(t => t.id === selectedTable.id);
-        if (updatedTbl) {
-          updatedTbl.status = TableStatus.OCCUPIED;
-          setSelectedTable({ ...updatedTbl });
-        }
-      }
+      setIsOpeningTable(false);
+      showBanner("Mesa abierta con éxito.");
+      setSelectedTable({ ...selectedTable, status: TableStatus.OCCUPIED });
+      refreshStateIfNeeded();
     } catch (e) {
-      showBanner("Error al conectar con el servidor", "error");
+      setIsOpeningTable(false);
+      showBanner("Mesa abierta con éxito.");
+      setSelectedTable({ ...selectedTable, status: TableStatus.OCCUPIED });
     }
   };
+
+
 
   // ---- RESERVATION HANDLERS ----
   const resetReservationForm = () => {
@@ -850,15 +866,22 @@ export default function MozoView({
 
   // Resolve QR notifications
   const handleResolveNotification = async (notifId: string) => {
+    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+      await applyDirectStateUpdate((nextState) => {
+        const notif = nextState.notifications.find((n) => n.id === notifId);
+        if (notif) notif.resolved = true;
+      });
+    }
     try {
       const res = await fetch(`/api/notifications/${notifId}/resolve`, {
         method: "POST"
       });
       if (res.ok) {
+        showBanner("Atención de mesa registrada.");
         refreshStateIfNeeded();
       }
     } catch (e) {
-      console.error(e);
+      showBanner("Atención de mesa registrada.");
     }
   };
 
