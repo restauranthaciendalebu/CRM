@@ -340,12 +340,10 @@ export default function MozoView({
     const tableId = selectedTable.id;
     const guests = Number(openingGuestCount) || 2;
 
-    // Immediately update local UI so the panel switches to OCCUPIED
     setIsOpeningTable(false);
-    setSelectedTable({ ...selectedTable, status: TableStatus.OCCUPIED });
 
     try {
-      await fetch(`/api/tables/${tableId}/open`, {
+      const res = await fetch(`/api/tables/${tableId}/open`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
@@ -353,11 +351,17 @@ export default function MozoView({
           waiterId: activeUser?.id
         })
       });
+      if (res.ok) {
+        setSelectedTable({ ...selectedTable, status: TableStatus.OCCUPIED });
+        showBanner(`Mesa abierta con éxito para ${guests} personas.`);
+        refreshStateIfNeeded();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showBanner(err.error || "No se pudo abrir la mesa.", "error");
+      }
     } catch {
-      // updateState in dbClient handles persistence
+      showBanner("Error de conexión al abrir la mesa.", "error");
     }
-    showBanner(`Mesa abierta con éxito para ${guests} personas.`);
-    refreshStateIfNeeded();
   };
 
 
