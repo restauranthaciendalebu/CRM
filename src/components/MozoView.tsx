@@ -1165,11 +1165,11 @@ export default function MozoView({
   }
 
   // RENDER WAITER CONSOLE
-  // Dynamic zones extracted from actual table data
-  const zones = Array.from(new Set(state.tables.map(t => t.zone))).sort();
+  const sortedTables = [...state.tables].sort((a, b) => a.number - b.number);
+  const zones = Array.from(new Set(sortedTables.map(t => t.zone))).sort();
   const currentZoneTables = selectedZone === "all" 
-    ? state.tables 
-    : state.tables.filter(t => t.zone === selectedZone);
+    ? sortedTables 
+    : sortedTables.filter(t => t.zone === selectedZone);
 
   // Table status summary
   const tableSummary = {
