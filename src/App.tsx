@@ -16,8 +16,9 @@ const CustomerQRView = lazy(() => import("./components/CustomerQRView"));
 const ThemeCarousel = lazy(() => import("./components/ThemeCarousel"));
 
 function getQRTableNumber(): number | null {
-  const params = new URLSearchParams(window.location.search);
-  const mesa = params.get("mesa");
+  const search = window.location.search || (window.location.hash.includes("?") ? window.location.hash.split("?")[1] : "");
+  const params = new URLSearchParams(search);
+  const mesa = params.get("mesa") || params.get("table") || params.get("m") || params.get("Mesa") || params.get("MESA");
   if (mesa && !isNaN(Number(mesa))) {
     return Number(mesa);
   }

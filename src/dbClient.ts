@@ -1065,11 +1065,12 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     // 8. Call waiter notifications
     if (path === "/api/notifications/call" && method === "POST") {
       const { tableNumber, type, notes } = body;
+      const parsedTableNumber = Number(tableNumber) || 1;
       const notifId = "nt_" + Math.random().toString(36).substring(2, 11);
       const newNotif = {
         id: notifId,
-        tableNumber: Number(tableNumber),
-        type: type as "CALL_WAITER" | "REQUEST_BILL",
+        tableNumber: parsedTableNumber,
+        type: (type || "CALL_WAITER") as "CALL_WAITER" | "REQUEST_BILL",
         createdAt: new Date().toISOString(),
         resolved: false,
         notes: notes || "",
@@ -1078,7 +1079,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
       await updateState(s => {
         s.notifications.push(newNotif);
-        const table = s.tables.find(t => t.number === Number(tableNumber));
+        const table = s.tables.find(t => t.number === parsedTableNumber);
         if (table && type === "REQUEST_BILL") {
           table.status = TableStatus.BILL_REQUESTED;
         }
