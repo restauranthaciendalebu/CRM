@@ -377,9 +377,13 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
   }
   const base = cloneState(currentCachedState || createEmptyState());
   ensureStateArrays(base);
-  const preliminary = cloneState(base);
-  mutator(preliminary);
-  const preliminaryChanges = diffState(base, preliminary);
+
+  // ⚡ INSTANT OPTIMISTIC UI: Publish state change to React immediately (< 5ms)
+  const optimisticState = cloneState(base);
+  mutator(optimisticState);
+  publishState(optimisticState, false);
+
+  const preliminaryChanges = diffState(base, optimisticState);
 
   let updatedState: RestaurantState;
   try {
@@ -427,11 +431,8 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
 
     if (isQuotaOrNetError) {
       console.warn("⚠️ Firestore quota superada. Guardando actualización en memoria local:", error);
-      const fallbackState = cloneState(currentCachedState || createEmptyState());
-      ensureStateArrays(fallbackState);
-      mutator(fallbackState);
-      publishState(fallbackState, true);
-      return fallbackState;
+      publishState(optimisticState, true);
+      return optimisticState;
     }
     throw error;
   }

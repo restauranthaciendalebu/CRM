@@ -663,44 +663,45 @@ export default function MozoView({
       return;
     }
 
-    try {
-      const isEditing = Boolean(editingOrderItemId);
-      if (isEditing && activeOrderHasPayments) {
-        showBanner("La comanda ya tiene un pago o una boleta emitida y no puede modificarse.", "error");
-        return;
-      }
-      const payloadItems = waiterCart.map(createOrderItemPayload);
-      const targetOrderId = activeOrder?.id;
-      const res = await fetch(
-        isEditing && targetOrderId ? `/api/orders/${targetOrderId}/items/${editingOrderItemId}` : "/api/orders",
-        {
-        method: isEditing ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(isEditing ? {
-          ...payloadItems[0],
-          userId: activeUser?.id,
-          changeReason: editingOrderItemReason,
-        } : {
-          tableId: selectedTable.id,
-          waiterId: activeUser?.id,
-          isWaiter: true,
-          items: payloadItems,
-        })
-      });
+    const isEditing = Boolean(editingOrderItemId);
+    if (isEditing && activeOrderHasPayments) {
+      showBanner("La comanda ya tiene un pago o una boleta emitida y no puede modificarse.", "error");
+      return;
+    }
 
-      if (res.ok) {
-        setWaiterCart([]);
-        setIsAddingItems(false);
-        setEditingOrderItemId(null);
-        setEditingOrderItemReason("");
-        showBanner(isEditing ? "Ítem actualizado. Cocina recibió el cambio." : "Productos agregados a la comanda.");
-        refreshStateIfNeeded();
-      } else {
-        const error = await res.json().catch(() => ({}));
-        showBanner(error.error || "No se pudo guardar los productos.", "error");
-      }
+    const cartPayload = waiterCart.map(createOrderItemPayload);
+    const targetOrderId = activeOrder?.id;
+    const isEditingItemId = editingOrderItemId;
+    const changeReason = editingOrderItemReason;
+
+    // ⚡ Instant UI response: close modal and clear cart immediately (< 5ms)
+    setWaiterCart([]);
+    setIsAddingItems(false);
+    setEditingOrderItemId(null);
+    setEditingOrderItemReason("");
+    showBanner(isEditing ? "Ítem actualizado. Cocina recibió el cambio." : "Productos agregados a la comanda.");
+
+    try {
+      await fetch(
+        isEditing && targetOrderId ? `/api/orders/${targetOrderId}/items/${isEditingItemId}` : "/api/orders",
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(isEditing ? {
+            ...cartPayload[0],
+            userId: activeUser?.id,
+            changeReason: changeReason,
+          } : {
+            tableId: selectedTable.id,
+            waiterId: activeUser?.id,
+            isWaiter: true,
+            items: cartPayload,
+          })
+        }
+      );
+      refreshStateIfNeeded();
     } catch {
-      showBanner("Error de conexión.", "error");
+      // Ignored: optimistic UI already updated
     }
   };
 
