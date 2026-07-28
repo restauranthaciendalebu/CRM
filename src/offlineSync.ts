@@ -7,10 +7,24 @@ const LEGACY_CACHE_KEY = "hacienda_offline_state_cache";
 export function saveOfflineStateCache(state: RestaurantState) {
   if (typeof window === "undefined" || !state) return;
   try {
-    localStorage.removeItem(LEGACY_CACHE_KEY);
+    try {
+      localStorage.removeItem(LEGACY_CACHE_KEY);
+    } catch {}
+
+    const sanitizedProducts = (state.products || []).map((p) => {
+      if (p.imageUrl && p.imageUrl.startsWith("data:image/")) {
+        return {
+          ...p,
+          imageUrl: "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=60",
+        };
+      }
+      return p;
+    });
+
     const publicState: RestaurantState = {
       ...state,
-      users: state.users.map(({ id, name, username, role }) => ({ id, name, username, role })),
+      users: (state.users || []).map(({ id, name, username, role }) => ({ id, name, username, role })),
+      products: sanitizedProducts,
       ingredients: [],
       orders: [],
       customers: [],
@@ -23,9 +37,12 @@ export function saveOfflineStateCache(state: RestaurantState) {
       auditLogs: [],
       inventoryTransactions: [],
     };
-    localStorage.setItem(OFFLINE_CACHE_KEY, JSON.stringify(publicState));
-  } catch (e) {
-    // Ignore quota errors if storage full
+    const payload = JSON.stringify(publicState);
+    localStorage.setItem(OFFLINE_CACHE_KEY, payload);
+  } catch {
+    try {
+      localStorage.removeItem(OFFLINE_CACHE_KEY);
+    } catch {}
   }
 }
 

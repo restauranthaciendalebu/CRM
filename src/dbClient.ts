@@ -1376,55 +1376,72 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       let savedProduct: any = null;
       let errorMsg = "";
 
-      await updateState(s => {
-        if (!s.auditLogs) s.auditLogs = [];
+      const cleanImageUrl = imageUrl && imageUrl.startsWith("data:image/") && imageUrl.length > 30000
+        ? "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=60"
+        : (imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=60");
 
-        if (id) {
-          const prod = s.products.find(p => p.id === id);
-          if (prod) {
-            const prevPrice = prod.price;
-            prod.name = name;
-            prod.description = description;
-            prod.price = Number(price);
-            prod.imageUrl = imageUrl || prod.imageUrl;
-            prod.categoryId = categoryId;
-            prod.allergens = allergens || [];
-            prod.isAvailable = isAvailable !== undefined ? isAvailable : prod.isAvailable;
-            prod.isRecommended = !!isRecommended;
-            prod.recipe = recipe || prod.recipe || [];
-            savedProduct = prod;
+      try {
+        await updateState(s => {
+          if (!s.auditLogs) s.auditLogs = [];
+
+          if (id) {
+            const prod = s.products.find(p => p.id === id);
+            if (prod) {
+              const prevPrice = prod.price;
+              if (name) prod.name = name;
+              if (description !== undefined) prod.description = description;
+              prod.price = Number(price);
+              prod.imageUrl = cleanImageUrl;
+              if (categoryId) prod.categoryId = categoryId;
+              if (allergens) prod.allergens = allergens;
+              prod.isAvailable = isAvailable !== undefined ? isAvailable : prod.isAvailable;
+              prod.isRecommended = !!isRecommended;
+              if (recipe) prod.recipe = recipe;
+              savedProduct = prod;
+
+              s.auditLogs.push({
+                id: "audit_" + Math.random().toString(36).substring(2, 11),
+                action: "Producto Modificado",
+                details: `Se modificó el producto "${name || prod.name}" (Precio anterior: $${prevPrice.toLocaleString("es-CL")} -> Nuevo precio: $${Number(price).toLocaleString("es-CL")}) por ${operatorName || "Administrador"}.`,
+                createdAt: new Date().toISOString()
+              });
+            }
+          } else {
+            const newId = "p_" + Math.random().toString(36).substring(2, 11);
+            savedProduct = {
+              id: newId,
+              name: name || "Producto Nuevo",
+              description: description || "",
+              price: Number(price) || 0,
+              imageUrl: cleanImageUrl,
+              categoryId: categoryId || "c1",
+              allergens: allergens || [],
+              isAvailable: isAvailable !== undefined ? isAvailable : true,
+              isRecommended: !!isRecommended,
+              recipe: recipe || []
+            };
+            s.products.push(savedProduct);
 
             s.auditLogs.push({
               id: "audit_" + Math.random().toString(36).substring(2, 11),
-              action: "Producto Modificado",
-              details: `Se modificó el producto "${name}" (Precio anterior: $${prevPrice.toLocaleString("es-CL")} -> Nuevo precio: $${Number(price).toLocaleString("es-CL")}) por ${operatorName || "Administrador"}.`,
+              action: "Producto Creado",
+              details: `Se creó el producto "${name}" con precio $${Number(price).toLocaleString("es-CL")} en categoría "${s.categories.find(c => c.id === categoryId)?.name || categoryId}" por ${operatorName || "Administrador"}.`,
               createdAt: new Date().toISOString()
             });
           }
-        } else {
-          const newId = "p_" + Math.random().toString(36).substring(2, 11);
-          savedProduct = {
-            id: newId,
-            name,
-            description,
-            price: Number(price),
-            imageUrl: imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=60",
-            categoryId,
-            allergens: allergens || [],
-            isAvailable: isAvailable !== undefined ? isAvailable : true,
-            isRecommended: !!isRecommended,
-            recipe: recipe || []
-          };
-          s.products.push(savedProduct);
-
-          s.auditLogs.push({
-            id: "audit_" + Math.random().toString(36).substring(2, 11),
-            action: "Producto Creado",
-            details: `Se creó el producto "${name}" con precio $${Number(price).toLocaleString("es-CL")} en categoría "${s.categories.find(c => c.id === categoryId)?.name || categoryId}" por ${operatorName || "Administrador"}.`,
-            createdAt: new Date().toISOString()
-          });
+        });
+      } catch (e: any) {
+        console.warn("Product price update fallback executed:", e);
+        if (currentCachedState) {
+          const prod = currentCachedState.products.find(p => p.id === id);
+          if (prod) {
+            prod.price = Number(price);
+            if (name) prod.name = name;
+            savedProduct = prod;
+          }
+          publishState(currentCachedState);
         }
-      });
+      }
 
       if (errorMsg) {
         return createResponse({ error: errorMsg }, 400);

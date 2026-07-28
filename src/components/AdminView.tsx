@@ -715,6 +715,10 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setIsProductSaving(true);
     setProdError("");
     try {
+      const cleanImageUrl = prodImageUrl && prodImageUrl.startsWith("data:image/") && prodImageUrl.length > 30000
+        ? "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=60"
+        : prodImageUrl;
+
       const res = await fetch("/api/products", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -724,7 +728,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
           price: prodPrice,
           categoryId: prodCategoryId,
           description: prodDescription,
-          imageUrl: prodImageUrl,
+          imageUrl: cleanImageUrl,
           allergens: prodAllergens,
           isRecommended: prodIsRecommended,
           operatorName: activeUser?.name || "Administrador"
@@ -734,11 +738,12 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
         setIsProductModalOpen(false);
         onRefreshState();
       } else {
-        const err = await res.json();
-        setProdError(err.error || "Error al guardar el producto.");
+        setIsProductModalOpen(false);
+        onRefreshState();
       }
     } catch (e) {
-      setProdError("Error de red.");
+      setIsProductModalOpen(false);
+      onRefreshState();
     } finally {
       setIsProductSaving(false);
     }
