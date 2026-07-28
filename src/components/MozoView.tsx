@@ -133,6 +133,7 @@ export default function MozoView({
   const [tipPercent, setTipPercent] = useState(10); // 10% default
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
   const [billingCreditCustomerId, setBillingCreditCustomerId] = useState("");
+  const [shouldPrintReceipt, setShouldPrintReceipt] = useState(true);
   const [billingSuccess, setBillingSuccess] = useState(false);
   const [lastBillingPayments, setLastBillingPayments] = useState<Payment[]>([]);
   const [lastBillingOrderId, setLastBillingOrderId] = useState("");
@@ -996,7 +997,7 @@ export default function MozoView({
         }
         setBillingCustomAmount(0);
 
-        if (activeOrder && processedPayments.length > 0) {
+        if (shouldPrintReceipt && activeOrder && processedPayments.length > 0) {
           printThermalReceipt({
             order: activeOrder,
             state,
@@ -1911,9 +1912,10 @@ export default function MozoView({
               );
             })() : (
               /* OCCUPIED DETAILS PANEL */
-              <div className="flex-1 flex flex-col justify-between">
-                <div>
-                  <div className="bg-zinc-50 rounded-2xl p-3 border border-zinc-100 flex justify-between items-center mb-4 text-xs">
+              <div className="flex-1 flex flex-col justify-between h-full overflow-hidden">
+                {/* SCROLLABLE MAIN CONTENT (Header + Products + Commands) */}
+                <div className="flex-1 overflow-y-auto pr-1 space-y-3">
+                  <div className="bg-zinc-50 rounded-2xl p-3 border border-zinc-100 flex justify-between items-center text-xs">
                     <div>
                       <span className="text-zinc-500 font-semibold block">Comanda:</span>
                       <span className="font-bold text-zinc-900">
@@ -1950,17 +1952,15 @@ export default function MozoView({
                     </div>
                   </div>
 
-
-
-                  {/* PRODUCTS LIST */}
-                  <div className="space-y-2 mb-4">
+                  {/* PRODUCTS LIST (Expands to fill tablet screen without premature scrolling) */}
+                  <div className="space-y-2">
                     <div className="flex justify-between items-center text-xs font-black uppercase tracking-wider text-zinc-400">
                       <span>Platos / Bebidas</span>
                       <span>Estado</span>
                     </div>
 
                     {activeOrder && activeOrder.items.length > 0 ? (
-                      <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                      <div className="space-y-2">
                         {activeOrder.items.map((it) => {
                           const prod = state.products.find(p => p.id === it.productId);
                           if (!prod) return null;
@@ -2058,7 +2058,7 @@ export default function MozoView({
                   </div>
 
                   {/* COMMAND ACTIONS */}
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2 pt-2">
                     <button
                       onClick={openAddItemsModal}
                       className="bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-900 font-bold p-3 rounded-xl text-xs flex items-center justify-center gap-1 shadow-sm cursor-pointer"
@@ -2079,9 +2079,9 @@ export default function MozoView({
                   </div>
                 </div>
 
-                {/* BOTTOM CLOSING ZONE */}
+                {/* FIXED STICKY BOTTOM CLOSING ZONE FOR TABLETS */}
                 {activeOrder && (
-                  <div className="border-t border-zinc-100 pt-4 mt-6 space-y-3">
+                  <div className="shrink-0 border-t border-zinc-200 bg-white pt-3 mt-3 space-y-2 sticky bottom-0 z-10 shadow-xs">
                     <div className="flex justify-between items-center text-sm">
                       <span className="font-bold text-zinc-600">Total mesa:</span>
                       <span className="font-black text-zinc-950 text-base">
@@ -2089,12 +2089,12 @@ export default function MozoView({
                       </span>
                     </div>
                     {activeOrderPaid > 0 && (
-                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs">
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs">
                         <div className="flex justify-between font-bold text-emerald-700">
                           <span>Pagado</span>
                           <span>{formatCLP(activeOrderPaid)}</span>
                         </div>
-                        <div className="mt-1 flex justify-between font-black text-amber-900">
+                        <div className="mt-0.5 flex justify-between font-black text-amber-900">
                           <span>Saldo pendiente</span>
                           <span>{formatCLP(billingRemaining)}</span>
                         </div>
@@ -2764,6 +2764,35 @@ export default function MozoView({
                           )}
                         </motion.div>
                       )}
+
+                      {/* Receipt Print Choice Toggle */}
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] font-black uppercase text-zinc-400 block tracking-wider">¿Imprimir Boleta Térmica?</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShouldPrintReceipt(true)}
+                            className={`py-2 px-3 border rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                              shouldPrintReceipt
+                                ? "bg-amber-500 border-amber-400 text-zinc-950 shadow-xs"
+                                : "bg-white border-zinc-200 text-zinc-500 hover:bg-zinc-50"
+                            }`}
+                          >
+                            <Printer className="w-3.5 h-3.5" /> Sí, Imprimir Boleta
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShouldPrintReceipt(false)}
+                            className={`py-2 px-3 border rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                              !shouldPrintReceipt
+                                ? "bg-zinc-900 border-zinc-800 text-white shadow-xs"
+                                : "bg-white border-zinc-200 text-zinc-500 hover:bg-zinc-50"
+                            }`}
+                          >
+                            🚫 No Imprimir (Solo Cobro)
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </>
                 )}
@@ -2794,8 +2823,10 @@ export default function MozoView({
                       </>
                     ) : paymentMethod === PaymentMethod.ACCOUNT ? (
                       `Confirmar cargo ${formatCLP(nextBillingPaymentAmount)}`
+                    ) : shouldPrintReceipt ? (
+                      `Cobrar e Imprimir ${formatCLP(nextBillingPaymentAmount)}`
                     ) : (
-                      `Cobrar ${formatCLP(nextBillingPaymentAmount)}`
+                      `Cobrar ${formatCLP(nextBillingPaymentAmount)} (Sin Imprimir)`
                     )}
                   </button>
                 </div>
