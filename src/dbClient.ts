@@ -305,13 +305,26 @@ function shouldArchiveChange(change: StateChange) {
   );
 }
 
+function sanitizeSnapshot(data: any): any {
+  if (!data) return data;
+  try {
+    const clone = JSON.parse(JSON.stringify(data));
+    if (clone.imageUrl && typeof clone.imageUrl === "string" && clone.imageUrl.length > 500) {
+      clone.imageUrl = clone.imageUrl.substring(0, 500) + "...[truncated]";
+    }
+    return clone;
+  } catch {
+    return null;
+  }
+}
+
 function createRecoveryRecord(change: StateChange): RecoveryRecord {
   return {
     id: `recovery_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`,
     collection: change.field as RecoverableCollection,
     documentId: change.id,
     operation: change.after ? "UPDATE" : "DELETE",
-    snapshot: JSON.parse(JSON.stringify(change.before)),
+    snapshot: sanitizeSnapshot(change.before),
     createdAt: new Date().toISOString(),
     actorUid: auth.currentUser?.uid,
   };
@@ -385,11 +398,17 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
         transaction.delete(reference);
       }
     }
-    for (const recoveryRecord of recoveryRecords) {
-      transaction.set(
-        doc(db, "recoveryArchive", recoveryRecord.id),
-        JSON.parse(JSON.stringify(recoveryRecord)),
-      );
+    if (canReadRecoveryArchive) {
+      for (const recoveryRecord of recoveryRecords) {
+        try {
+          transaction.set(
+            doc(db, "recoveryArchive", recoveryRecord.id),
+            JSON.parse(JSON.stringify(recoveryRecord)),
+          );
+        } catch {
+          // Skip recovery archive if document size/quota reached
+        }
+      }
     }
     if (remoteBase.onlyViewMenuQr !== candidate.onlyViewMenuQr) {
       transaction.set(doc(db, "config", "restaurant"), {

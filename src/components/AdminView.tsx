@@ -525,9 +525,14 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
       if (res.ok) {
         setEditingProduct(null);
         onRefreshState();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        window.alert(err.error || "No se pudo actualizar el precio.");
       }
     } catch (e) {
       console.error(e);
+      setEditingProduct(null);
+      onRefreshState();
     }
   };
 
