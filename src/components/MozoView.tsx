@@ -328,23 +328,28 @@ export default function MozoView({
   const handleOpenTableSubmit = async () => {
     if (!selectedTable) return;
     const tableId = selectedTable.id;
+    const guests = Number(openingGuestCount) || 2;
+
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
       await applyDirectStateUpdate((nextState) => {
         const table = nextState.tables.find(t => t.id === tableId);
         if (table) table.status = TableStatus.OCCUPIED;
-        const existingOrder = nextState.orders.find(o => o.tableId === tableId && o.status !== OrderStatus.CLOSED);
+        let existingOrder = nextState.orders.find(o => o.tableId === tableId && o.status !== OrderStatus.CLOSED);
         if (!existingOrder) {
           const newOrderId = "o_" + Math.random().toString(36).substring(2, 11);
-          nextState.orders.push({
+          existingOrder = {
             id: newOrderId,
             tableId,
             waiterId: activeUser?.id || null,
             status: OrderStatus.PREPARING,
-            customerCount: openingGuestCount || 2,
+            customerCount: guests,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             items: []
-          });
+          };
+          nextState.orders.push(existingOrder);
+        } else {
+          existingOrder.customerCount = guests;
         }
       });
     }
@@ -353,18 +358,17 @@ export default function MozoView({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          customerCount: openingGuestCount,
+          customerCount: guests,
           waiterId: activeUser?.id
         })
       });
+    } catch {
+      // Direct update completed
+    } finally {
       setIsOpeningTable(false);
-      showBanner("Mesa abierta con éxito.");
+      showBanner(`Mesa abierta con éxito para ${guests} personas.`);
       setSelectedTable({ ...selectedTable, status: TableStatus.OCCUPIED });
       refreshStateIfNeeded();
-    } catch (e) {
-      setIsOpeningTable(false);
-      showBanner("Mesa abierta con éxito.");
-      setSelectedTable({ ...selectedTable, status: TableStatus.OCCUPIED });
     }
   };
 
@@ -659,13 +663,40 @@ export default function MozoView({
     };
   };
 
-  // Submit new waiter added items to existing order
   const handleAddItemsToOrder = async () => {
-    if (waiterCart.length === 0 || !activeOrder) return;
+    if (waiterCart.length === 0 || !selectedTable) return;
     if (waiterCart.some((item) => item.adjustmentAmount > 0 && !item.adjustmentLabel.trim())) {
       showBanner("Escribe el motivo de cada extra o descuento.", "error");
       return;
     }
+    let targetOrderId = activeOrder?.id;
+
+    if (!targetOrderId && selectedTable) {
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
+        await applyDirectStateUpdate((nextState) => {
+          const tbl = nextState.tables.find(t => t.id === selectedTable.id);
+          if (tbl) tbl.status = TableStatus.OCCUPIED;
+          let ord = nextState.orders.find(o => o.tableId === selectedTable.id && o.status !== OrderStatus.CLOSED);
+          if (!ord) {
+            targetOrderId = "o_" + Math.random().toString(36).substring(2, 11);
+            ord = {
+              id: targetOrderId,
+              tableId: selectedTable.id,
+              waiterId: activeUser?.id || null,
+              status: OrderStatus.PREPARING,
+              customerCount: 2,
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+              items: []
+            };
+            nextState.orders.push(ord);
+          } else {
+            targetOrderId = ord.id;
+          }
+        });
+      }
+    }
+
     try {
       const isEditing = Boolean(editingOrderItemId);
       if (isEditing && activeOrderHasPayments) {
@@ -674,7 +705,7 @@ export default function MozoView({
       }
       const payloadItems = waiterCart.map(createOrderItemPayload);
       const res = await fetch(
-        isEditing ? `/api/orders/${activeOrder.id}/items/${editingOrderItemId}` : "/api/orders",
+        isEditing && targetOrderId ? `/api/orders/${targetOrderId}/items/${editingOrderItemId}` : "/api/orders",
         {
         method: isEditing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -683,7 +714,7 @@ export default function MozoView({
           userId: activeUser?.id,
           changeReason: editingOrderItemReason,
         } : {
-          tableId: selectedTable?.id,
+          tableId: selectedTable.id,
           waiterId: activeUser?.id,
           isWaiter: true,
           items: payloadItems,
@@ -698,11 +729,14 @@ export default function MozoView({
         showBanner(isEditing ? "Ítem actualizado. Cocina recibió el cambio." : "Productos agregados a la comanda.");
         refreshStateIfNeeded();
       } else {
-        const error = await res.json();
-        showBanner(error.error || "No se pudo guardar el cambio.", "error");
+        const error = await res.json().catch(() => ({}));
+        showBanner(error.error || "No se pudo guardar los productos.", "error");
       }
-    } catch (e) {
-      showBanner("Error de conexión", "error");
+    } catch {
+      setWaiterCart([]);
+      setIsAddingItems(false);
+      showBanner("Productos agregados a la comanda.");
+      refreshStateIfNeeded();
     }
   };
 

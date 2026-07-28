@@ -660,40 +660,47 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       const { customerCount, waiterId } = body;
 
       let errorMsg = "";
+      let targetOrder: Order | null = null;
+
       const updated = await updateState(s => {
         const table = s.tables.find(t => t.id === id);
         if (!table) {
           errorMsg = "Mesa no encontrada";
           return;
         }
-        if (table.status === TableStatus.OCCUPIED) {
-          errorMsg = "La mesa ya está ocupada";
-          return;
-        }
+
         table.status = TableStatus.OCCUPIED;
         
         const waiter = s.users.find(u => u.id === waiterId);
         const waiterName = waiter ? waiter.name : "Mozo";
-        
-        const newOrderId = "o_" + Math.random().toString(36).substring(2, 11);
-        const newOrder: Order = {
-          id: newOrderId,
-          tableId: id,
-          waiterId: waiterId || null,
-          status: OrderStatus.PREPARING,
-          customerCount: customerCount || 2,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          items: []
-        };
-        s.orders.push(newOrder);
+        const guests = Number(customerCount) || 2;
+
+        let existingOrder = s.orders.find(o => o.tableId === id && o.status !== OrderStatus.CLOSED);
+        if (!existingOrder) {
+          const newOrderId = "o_" + Math.random().toString(36).substring(2, 11);
+          existingOrder = {
+            id: newOrderId,
+            tableId: id,
+            waiterId: waiterId || null,
+            status: OrderStatus.PREPARING,
+            customerCount: guests,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            items: []
+          };
+          s.orders.push(existingOrder);
+        } else {
+          existingOrder.customerCount = guests;
+          if (waiterId) existingOrder.waiterId = waiterId;
+        }
+        targetOrder = existingOrder;
 
         s.auditLogs.push({
           id: "audit_" + Math.random().toString(36).substring(2, 11),
           userId: waiterId || undefined,
           userName: waiterName,
           action: "Mesa Abierta",
-          details: `${waiterName} abrió la Mesa ${table.number} para ${customerCount || 2} personas.`,
+          details: `${waiterName} abrió la Mesa ${table.number} para ${guests} personas.`,
           createdAt: new Date().toISOString()
         });
       });
@@ -701,7 +708,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       if (errorMsg) {
         return createResponse({ error: errorMsg }, 400);
       }
-      return createResponse({ success: true, state: updated });
+      return createResponse({ success: true, order: targetOrder, state: updated });
     }
 
     // 4. Create Order / Add order from Customer QR
