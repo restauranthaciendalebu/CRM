@@ -16,5 +16,14 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
+    build: {
+      rollupOptions: {
+        output: {
+          entryFileNames: 'assets/[name]-[hash]-v2.js',
+          chunkFileNames: 'assets/[name]-[hash]-v2.js',
+          assetFileNames: 'assets/[name]-[hash]-v2.[ext]',
+        },
+      },
+    },
   };
 });
