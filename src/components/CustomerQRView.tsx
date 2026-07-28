@@ -15,6 +15,7 @@ import {
   Check,
   AlertTriangle,
   Plus,
+  Info,
 } from "lucide-react";
 import { getOptimizedImageUrl } from "../imageUtils";
 

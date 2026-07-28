@@ -61,18 +61,58 @@ export function setupAudioUnlock() {
   window.addEventListener("keydown", unlock, { once: true });
 }
 
+export function playWebAudioChime() {
+  try {
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    if (ctx.state === "suspended") {
+      void ctx.resume();
+    }
+    
+    const now = ctx.currentTime;
+    
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = "sine";
+    osc1.frequency.setValueAtTime(783.99, now);
+    gain1.gain.setValueAtTime(0.5, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.6);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(1046.50, now + 0.2);
+    gain2.gain.setValueAtTime(0.6, now + 0.2);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.2);
+    osc2.stop(now + 0.9);
+  } catch (e) {
+    // Ignore audio synth errors
+  }
+}
+
 // Play waiter call chime & vibrate (Celulares, Tablets, PC)
 export function playWaiterCallSound() {
   setupAudioUnlock();
 
-  // Haptic vibration for mobile phones
+  // Haptic vibration for mobile phones & tablets
   if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
     try {
-      navigator.vibrate([300, 150, 300]);
+      navigator.vibrate([300, 150, 300, 150, 400]);
     } catch (e) {
       // Ignore restriction
     }
   }
+
+  // Synthesize Web Audio API chime
+  playWebAudioChime();
 
   const audio = getWaiterAudio();
   if (audio) {
@@ -84,6 +124,8 @@ export function playWaiterCallSound() {
 // Play kitchen alert chime for new orders (TV / Cocina)
 export function playKitchenNewOrderSound() {
   setupAudioUnlock();
+
+  playWebAudioChime();
 
   const audio = getKitchenAudio();
   if (audio) {

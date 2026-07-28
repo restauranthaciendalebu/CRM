@@ -182,7 +182,7 @@ export default function MozoView({
     };
   }, [selectedTable]);
 
-  // Audio chime & haptic vibration when customer calls waiter or requests bill
+  const isInitialNotifRef = useRef(true);
   const prevUnresolvedNotifIdsRef = useRef<string[]>([]);
   useEffect(() => {
     setupAudioUnlock();
@@ -190,8 +190,14 @@ export default function MozoView({
       .filter(n => !n.resolved)
       .map(n => n.id);
 
+    if (isInitialNotifRef.current) {
+      isInitialNotifRef.current = false;
+      prevUnresolvedNotifIdsRef.current = currentUnresolved;
+      return;
+    }
+
     const hasNewNotif = currentUnresolved.some(id => !prevUnresolvedNotifIdsRef.current.includes(id));
-    if (hasNewNotif && prevUnresolvedNotifIdsRef.current.length > 0) {
+    if (hasNewNotif) {
       playWaiterCallSound();
     }
     prevUnresolvedNotifIdsRef.current = currentUnresolved;
