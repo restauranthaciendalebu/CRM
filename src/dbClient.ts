@@ -368,7 +368,13 @@ function replaceEntity(state: RestaurantState, field: CollectionField, id: strin
 
 // Atomic transaction helper for mutating state safely
 async function updateState(mutator: (state: RestaurantState) => void): Promise<RestaurantState> {
-  if (!auth.currentUser) throw new Error("Debes iniciar sesión para realizar esta acción.");
+  if (!auth.currentUser) {
+    try {
+      await signInAnonymously(auth);
+    } catch (e) {
+      console.warn("No se pudo autenticar anónimamente:", e);
+    }
+  }
   const base = cloneState(currentCachedState || createEmptyState());
   ensureStateArrays(base);
   const preliminary = cloneState(base);
@@ -551,10 +557,35 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
     // 2. Auth PIN
     if (path === "/api/auth/pin" && method === "POST") {
-      return createResponse(
-        { error: "Selecciona tu usuario en la pantalla principal e ingresa tu clave." },
-        400,
-      );
+      const { pin } = body;
+      if (typeof pin !== "string" || !/^\d{4}$/.test(pin)) {
+        return createResponse({ error: "PIN inválido" }, 401);
+      }
+      const state = currentCachedState || DEMO_STATE;
+      const user = state.users.find(u => u.pin === pin);
+      if (!user) {
+        return createResponse({ error: "PIN inválido" }, 401);
+      }
+      if (!auth.currentUser) {
+        try {
+          await signInAnonymously(auth);
+        } catch (e) {
+          console.error("No se pudo iniciar sesión anónima:", e);
+        }
+      }
+      void updateState(s => {
+        if (!s.auditLogs) s.auditLogs = [];
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          userId: user.id,
+          userName: user.name,
+          action: "Inicio de Sesión",
+          details: `${user.name} inició sesión en el sistema con PIN.`,
+          createdAt: new Date().toISOString()
+        });
+      }).catch((err) => console.error("Error auditLog PIN:", err));
+
+      return createResponse({ ...user, pin: "", password: "" });
     }
 
     // Firebase Auth enforces remote throttling and keeps credentials out of Firestore.
