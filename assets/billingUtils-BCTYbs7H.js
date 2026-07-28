@@ -1,0 +1,1 @@
+function e(t,n){return Math.max(0,Math.round(t)-Math.round(n))}function o(t,n,a,u){return n==="equal"?Math.max(1,Math.round(t/Math.max(1,a))):Math.round(n==="custom"?u:t)}function h(t,n,a,u){const r=Math.max(0,t-n);return a>=u?r:Math.round(r*(a/u))}export{o as a,h as b,e as g};
