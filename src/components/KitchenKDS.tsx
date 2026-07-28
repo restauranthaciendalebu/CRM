@@ -83,17 +83,18 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
 
   const isKitchenProduct = (productId: string) => {
     const product = state.products.find((candidate) => candidate.id === productId);
-    return Boolean(product && !isDirectServiceProduct(product));
+    if (product && isDirectServiceProduct(product)) {
+      return false;
+    }
+    return true;
   };
 
-  const isVisibleKitchenItem = (item: OrderItem) => isKitchenProduct(item.productId) &&
-    item.status !== OrderItemStatus.PENDING;
+  const isVisibleKitchenItem = (item: OrderItem) => isKitchenProduct(item.productId);
 
-  // Draft waiter items and all beverages stay outside the kitchen display.
+  // All active orders with food items stay on the kitchen display.
   const filteredOrders = state.orders
     .filter((order) =>
       order.status !== OrderStatus.CLOSED &&
-      order.status !== OrderStatus.PENDING_APPROVAL &&
       order.items.some(isVisibleKitchenItem)
     );
 
@@ -417,11 +418,11 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
 
                 {/* Items List (Full height & compact padding to display entire order) */}
                 <div className="px-2.5 py-1.5 flex-1 overflow-y-auto space-y-1">
-                  {visibleItems
-                    .map((it) => {
+                  {visibleItems.map((it) => {
                       const prod = state.products.find((p) => p.id === it.productId);
-                      if (!prod) return null;
+                      const productName = prod ? prod.name : `Plato (#${it.productId})`;
                       const isUpdating = pendingItemIds.includes(it.id);
+                      const isPending = it.status === OrderItemStatus.PENDING;
                       const isCooking = 
                         it.status === OrderItemStatus.SENT_TO_KITCHEN ||
                         it.status === OrderItemStatus.RECEIVED ||
@@ -436,12 +437,28 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                                 {it.quantity}x
                               </span>
                               <span className="text-[12px] font-extrabold text-white leading-tight break-words">
-                                {prod.name}
+                                {productName}
                               </span>
                             </div>
 
                             {/* SINGLE ICON STATUS BUTTON */}
                             <div className="shrink-0 ml-1">
+                              {/* 0. Pending status icon -> click to mark PREPARING */}
+                              {isPending && (
+                                <button
+                                  onClick={() => handleUpdateItemStatus(order.id, it.id, OrderItemStatus.PREPARING)}
+                                  disabled={isUpdating}
+                                  title="Pendiente — Clic para Cocinar"
+                                  className={`p-1 rounded-md border transition-all flex items-center justify-center cursor-pointer ${
+                                    isUpdating 
+                                      ? "bg-zinc-700 text-zinc-400 border-zinc-700 cursor-wait" 
+                                      : "bg-yellow-500/20 hover:bg-amber-500 text-yellow-400 hover:text-zinc-950 border-yellow-500/40 hover:border-amber-400 active:scale-95 shadow-sm"
+                                  }`}
+                                >
+                                  <Clock className="w-3.5 h-3.5 animate-pulse stroke-[2.5]" />
+                                </button>
+                              )}
+
                               {/* 1. Cooking status icon -> click to mark READY */}
                               {isCooking && (
                                 <button
@@ -478,9 +495,9 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                               {it.status === OrderItemStatus.DELIVERED && (
                                 <div 
                                   className="p-1 rounded-md border border-zinc-800 bg-zinc-900 text-zinc-600 flex items-center justify-center" 
-                                  title="Servido"
+                                  title="Entregado al cliente"
                                 >
-                                  <CheckCheck className="w-3.5 h-3.5" />
+                                  <CheckCheck className="w-3.5 h-3.5 stroke-[2]" />
                                 </div>
                               )}
                             </div>
