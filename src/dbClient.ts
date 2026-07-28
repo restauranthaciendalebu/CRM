@@ -375,60 +375,60 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
   mutator(preliminary);
   const preliminaryChanges = diffState(base, preliminary);
 
-  const updatedState = await runTransaction(db, async (transaction) => {
-    const existingChanges = preliminaryChanges.filter((change) => change.before);
-    const refs = existingChanges.map((change) => doc(db, change.field, change.id));
-    const snapshots = await Promise.all(refs.map((reference) => transaction.get(reference)));
-    const remoteBase = cloneState(base);
-    snapshots.forEach((snapshot, index) => {
-      const change = existingChanges[index];
-      replaceEntity(remoteBase, change.field, change.id, snapshot.exists() ? snapshot.data() : undefined);
-    });
+  let updatedState: RestaurantState;
+  try {
+    updatedState = await runTransaction(db, async (transaction) => {
+      const existingChanges = preliminaryChanges.filter((change) => change.before);
+      const refs = existingChanges.map((change) => doc(db, change.field, change.id));
+      const snapshots = await Promise.all(refs.map((reference) => transaction.get(reference)));
+      const remoteBase = cloneState(base);
+      snapshots.forEach((snapshot, index) => {
+        const change = existingChanges[index];
+        replaceEntity(remoteBase, change.field, change.id, snapshot.exists() ? snapshot.data() : undefined);
+      });
 
-    const candidate = cloneState(remoteBase);
-    mutator(candidate);
-    const finalChanges = diffState(remoteBase, candidate);
-    const recoveryRecords = finalChanges
-      .filter(shouldArchiveChange)
-      .map(createRecoveryRecord);
-    const readPaths = new Set(existingChanges.map((change) => `${change.field}/${change.id}`));
-    for (const change of finalChanges) {
-      const path = `${change.field}/${change.id}`;
-      if (change.before && !readPaths.has(path)) {
-        throw new Error("Los datos cambiaron mientras se guardaba. Intenta nuevamente.");
-      }
-      const reference = doc(db, change.field, change.id);
-      if (change.after) {
-        transaction.set(reference, JSON.parse(JSON.stringify(change.after)));
-      } else {
-        transaction.delete(reference);
-      }
-    }
-    if (canReadRecoveryArchive) {
-      for (const recoveryRecord of recoveryRecords) {
-        try {
-          transaction.set(
-            doc(db, "recoveryArchive", recoveryRecord.id),
-            JSON.parse(JSON.stringify(recoveryRecord)),
-          );
-        } catch {
-          // Skip recovery archive if document size/quota reached
+      const candidate = cloneState(remoteBase);
+      mutator(candidate);
+      const finalChanges = diffState(remoteBase, candidate);
+      const readPaths = new Set(existingChanges.map((change) => `${change.field}/${change.id}`));
+      for (const change of finalChanges) {
+        const path = `${change.field}/${change.id}`;
+        if (change.before && !readPaths.has(path)) {
+          throw new Error("Los datos cambiaron mientras se guardaba. Intenta nuevamente.");
+        }
+        const reference = doc(db, change.field, change.id);
+        if (change.after) {
+          transaction.set(reference, JSON.parse(JSON.stringify(change.after)));
+        } else {
+          transaction.delete(reference);
         }
       }
+      if (remoteBase.onlyViewMenuQr !== candidate.onlyViewMenuQr) {
+        transaction.set(doc(db, "config", "restaurant"), {
+          onlyViewMenuQr: Boolean(candidate.onlyViewMenuQr),
+        });
+      }
+      return candidate;
+    });
+  } catch (error: any) {
+    const errorMsg = String(error?.message || error?.code || error || "");
+    const isQuotaOrNetError =
+      error?.code === "resource-exhausted" ||
+      error?.code === "unavailable" ||
+      errorMsg.toLowerCase().includes("quota") ||
+      errorMsg.toLowerCase().includes("exhausted") ||
+      errorMsg.toLowerCase().includes("limit");
+
+    if (isQuotaOrNetError) {
+      console.warn("⚠️ Firestore quota superada. Guardando actualización en memoria local:", error);
+      const fallbackState = cloneState(currentCachedState || createEmptyState());
+      ensureStateArrays(fallbackState);
+      mutator(fallbackState);
+      publishState(fallbackState, true);
+      return fallbackState;
     }
-    if (remoteBase.onlyViewMenuQr !== candidate.onlyViewMenuQr) {
-      transaction.set(doc(db, "config", "restaurant"), {
-        onlyViewMenuQr: Boolean(candidate.onlyViewMenuQr),
-      });
-    }
-    if (canReadRecoveryArchive) {
-      candidate.recoveryArchive = [
-        ...(candidate.recoveryArchive || []),
-        ...recoveryRecords,
-      ];
-    }
-    return candidate;
-  });
+    throw error;
+  }
 
   publishState(updatedState);
   return updatedState;
