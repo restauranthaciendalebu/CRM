@@ -1085,26 +1085,42 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     if (path === "/api/notifications/call" && method === "POST") {
       const { tableNumber, type, notes } = body;
       const parsedTableNumber = Number(tableNumber) || 1;
-      const notifId = "nt_" + Math.random().toString(36).substring(2, 11);
-      const newNotif = {
-        id: notifId,
-        tableNumber: parsedTableNumber,
-        type: (type || "CALL_WAITER") as "CALL_WAITER" | "REQUEST_BILL",
-        createdAt: new Date().toISOString(),
-        resolved: false,
-        notes: notes || "",
-        requesterUid: auth.currentUser?.uid
-      };
+      const notifType = (type || "CALL_WAITER") as "CALL_WAITER" | "REQUEST_BILL";
+      let existingNotif: any = null;
 
       await updateState(s => {
-        s.notifications.push(newNotif);
+        if (!s.notifications) s.notifications = [];
+        // Deduplicate: check if there's ALREADY an unresolved notification for this table and type
+        const existing = s.notifications.find(
+          n => n.tableNumber === parsedTableNumber && n.type === notifType && !n.resolved
+        );
+
+        if (existing) {
+          existing.createdAt = new Date().toISOString();
+          if (notes) existing.notes = notes;
+          existingNotif = existing;
+        } else {
+          const notifId = "nt_" + Math.random().toString(36).substring(2, 11);
+          const newNotif = {
+            id: notifId,
+            tableNumber: parsedTableNumber,
+            type: notifType,
+            createdAt: new Date().toISOString(),
+            resolved: false,
+            notes: notes || "",
+            requesterUid: auth.currentUser?.uid
+          };
+          s.notifications.push(newNotif);
+          existingNotif = newNotif;
+        }
+
         const table = s.tables.find(t => t.number === parsedTableNumber);
-        if (table && type === "REQUEST_BILL") {
+        if (table && notifType === "REQUEST_BILL") {
           table.status = TableStatus.BILL_REQUESTED;
         }
       });
 
-      return createResponse({ success: true, notification: newNotif });
+      return createResponse({ success: true, notification: existingNotif });
     }
 
     // Resolve notification
@@ -1112,10 +1128,16 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     if (notifResolveMatch && method === "POST") {
       const id = notifResolveMatch[1];
       const updated = await updateState(s => {
-        const notif = s.notifications.find(n => n.id === id);
-        if (notif) {
-          notif.resolved = true;
-        }
+        if (!s.notifications) s.notifications = [];
+        const targetNotif = s.notifications.find(n => n.id === id);
+        const targetTable = targetNotif?.tableNumber;
+
+        // Resolve target notification and ALL other unresolved notifications for the same table
+        s.notifications.forEach(n => {
+          if (n.id === id || (targetTable && n.tableNumber === targetTable)) {
+            n.resolved = true;
+          }
+        });
       });
       return createResponse({ success: true, notifications: updated.notifications.filter(n => !n.resolved) });
     }

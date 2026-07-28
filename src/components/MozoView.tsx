@@ -866,10 +866,17 @@ export default function MozoView({
 
   // Resolve QR notifications
   const handleResolveNotification = async (notifId: string) => {
+    const targetNotif = state.notifications.find(n => n.id === notifId);
+    const targetTableNumber = targetNotif?.tableNumber;
+
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
       await applyDirectStateUpdate((nextState) => {
-        const notif = nextState.notifications.find((n) => n.id === notifId);
-        if (notif) notif.resolved = true;
+        if (!nextState.notifications) nextState.notifications = [];
+        nextState.notifications.forEach((n) => {
+          if (n.id === notifId || (targetTableNumber && n.tableNumber === targetTableNumber)) {
+            n.resolved = true;
+          }
+        });
       });
     }
     try {
@@ -1180,7 +1187,10 @@ export default function MozoView({
     reserved: state.tables.filter(t => t.status === TableStatus.RESERVED).length,
   };
 
-  const pendingNotifications = (state.notifications || []).filter(n => !n.resolved);
+  const rawPendingNotifications = (state.notifications || []).filter(n => !n.resolved);
+  const pendingNotifications = rawPendingNotifications.filter((notif, index, self) =>
+    index === self.findIndex((n) => n.tableNumber === notif.tableNumber && n.type === notif.type)
+  );
 
   return (
     <div className="bg-zinc-100 min-h-screen text-zinc-800 flex flex-col md:flex-row" id="mozo-main-layout">
