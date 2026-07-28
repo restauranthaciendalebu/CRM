@@ -378,10 +378,10 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
   const base = cloneState(currentCachedState || createEmptyState());
   ensureStateArrays(base);
 
-  // ⚡ INSTANT OPTIMISTIC UI: Publish state change to React immediately (< 5ms)
+  // ⚡ INSTANT AUTHORITATIVE UI: Update local cache & React immediately (< 5ms)
   const optimisticState = cloneState(base);
   mutator(optimisticState);
-  publishState(optimisticState, false);
+  publishState(optimisticState, true);
 
   const preliminaryChanges = diffState(base, optimisticState);
 
