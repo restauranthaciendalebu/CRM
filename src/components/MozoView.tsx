@@ -209,6 +209,16 @@ export default function MozoView({
     prevUnresolvedNotifIdsRef.current = currentUnresolved;
   }, [state.notifications]);
 
+  // Keep selectedTable in sync with state.tables so status changes propagate
+  useEffect(() => {
+    if (selectedTable) {
+      const fresh = state.tables.find(t => t.id === selectedTable.id);
+      if (fresh && (fresh.status !== selectedTable.status || fresh.zone !== selectedTable.zone || fresh.seats !== selectedTable.seats)) {
+        setSelectedTable(fresh);
+      }
+    }
+  }, [state.tables]);
+
 
   const showBanner = (text: string, type: "success" | "error" = "success") => {
     setBannerMsg({ text, type });
@@ -330,29 +340,10 @@ export default function MozoView({
     const tableId = selectedTable.id;
     const guests = Number(openingGuestCount) || 2;
 
-    if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-      await applyDirectStateUpdate((nextState) => {
-        const table = nextState.tables.find(t => t.id === tableId);
-        if (table) table.status = TableStatus.OCCUPIED;
-        let existingOrder = nextState.orders.find(o => o.tableId === tableId && o.status !== OrderStatus.CLOSED);
-        if (!existingOrder) {
-          const newOrderId = "o_" + Math.random().toString(36).substring(2, 11);
-          existingOrder = {
-            id: newOrderId,
-            tableId,
-            waiterId: activeUser?.id || null,
-            status: OrderStatus.PREPARING,
-            customerCount: guests,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            items: []
-          };
-          nextState.orders.push(existingOrder);
-        } else {
-          existingOrder.customerCount = guests;
-        }
-      });
-    }
+    // Immediately update local UI so the panel switches to OCCUPIED
+    setIsOpeningTable(false);
+    setSelectedTable({ ...selectedTable, status: TableStatus.OCCUPIED });
+
     try {
       await fetch(`/api/tables/${tableId}/open`, {
         method: "POST",
@@ -363,13 +354,10 @@ export default function MozoView({
         })
       });
     } catch {
-      // Direct update completed
-    } finally {
-      setIsOpeningTable(false);
-      showBanner(`Mesa abierta con éxito para ${guests} personas.`);
-      setSelectedTable({ ...selectedTable, status: TableStatus.OCCUPIED });
-      refreshStateIfNeeded();
+      // updateState in dbClient handles persistence
     }
+    showBanner(`Mesa abierta con éxito para ${guests} personas.`);
+    refreshStateIfNeeded();
   };
 
 
@@ -663,38 +651,12 @@ export default function MozoView({
     };
   };
 
+  // Submit new waiter added items to existing order
   const handleAddItemsToOrder = async () => {
     if (waiterCart.length === 0 || !selectedTable) return;
     if (waiterCart.some((item) => item.adjustmentAmount > 0 && !item.adjustmentLabel.trim())) {
       showBanner("Escribe el motivo de cada extra o descuento.", "error");
       return;
-    }
-    let targetOrderId = activeOrder?.id;
-
-    if (!targetOrderId && selectedTable) {
-      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-        await applyDirectStateUpdate((nextState) => {
-          const tbl = nextState.tables.find(t => t.id === selectedTable.id);
-          if (tbl) tbl.status = TableStatus.OCCUPIED;
-          let ord = nextState.orders.find(o => o.tableId === selectedTable.id && o.status !== OrderStatus.CLOSED);
-          if (!ord) {
-            targetOrderId = "o_" + Math.random().toString(36).substring(2, 11);
-            ord = {
-              id: targetOrderId,
-              tableId: selectedTable.id,
-              waiterId: activeUser?.id || null,
-              status: OrderStatus.PREPARING,
-              customerCount: 2,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-              items: []
-            };
-            nextState.orders.push(ord);
-          } else {
-            targetOrderId = ord.id;
-          }
-        });
-      }
     }
 
     try {
@@ -704,6 +666,7 @@ export default function MozoView({
         return;
       }
       const payloadItems = waiterCart.map(createOrderItemPayload);
+      const targetOrderId = activeOrder?.id;
       const res = await fetch(
         isEditing && targetOrderId ? `/api/orders/${targetOrderId}/items/${editingOrderItemId}` : "/api/orders",
         {
@@ -733,10 +696,7 @@ export default function MozoView({
         showBanner(error.error || "No se pudo guardar los productos.", "error");
       }
     } catch {
-      setWaiterCart([]);
-      setIsAddingItems(false);
-      showBanner("Productos agregados a la comanda.");
-      refreshStateIfNeeded();
+      showBanner("Error de conexión.", "error");
     }
   };
 
