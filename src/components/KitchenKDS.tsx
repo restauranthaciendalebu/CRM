@@ -144,7 +144,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
       (id) => !prevKitchenItemIdsRef.current.includes(id)
     );
 
-    if (hasNewKitchenItems && prevKitchenItemIdsRef.current.length > 0) {
+    if (hasNewKitchenItems) {
       playKitchenNewOrderSound();
     }
     prevKitchenItemIdsRef.current = currentKitchenItemIds;

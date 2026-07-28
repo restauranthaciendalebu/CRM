@@ -921,7 +921,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         let updatedCount = 0;
         const sentItemIds = new Set<string>();
         order.items.forEach(item => {
-          if (item.status === OrderItemStatus.PENDING) {
+          if (item.status === OrderItemStatus.PENDING || item.status === OrderItemStatus.SENT_TO_KITCHEN || item.status === OrderItemStatus.RECEIVED) {
             // Check if product requires kitchen preparation
             const product = s.products.find(p => p.id === item.productId);
             if (isDirectServiceProduct(product)) {

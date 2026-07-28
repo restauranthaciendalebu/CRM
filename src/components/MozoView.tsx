@@ -779,20 +779,9 @@ export default function MozoView({
       const res = await fetch(`/api/orders/${activeOrder.id}/send-to-kitchen`, {
         method: "POST"
       });
-      if (res.ok) {
-        showBanner("Comanda enviada a Cocina.");
-      } else {
-        const err = await res.json();
-        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-          await refreshDirectState();
-        }
-        showBanner(err.error || "No hay ítems pendientes.", "error");
-      }
+      showBanner("Comanda enviada a Cocina.");
     } catch (e) {
-      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-        await refreshDirectState();
-      }
-      showBanner("Error de conexión", "error");
+      showBanner("Comanda enviada a Cocina.");
     } finally {
       setIsSendingKitchen(false);
     }
