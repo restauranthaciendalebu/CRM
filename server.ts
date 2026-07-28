@@ -292,7 +292,7 @@ async function startServer() {
           id: newOrderId,
           tableId,
           waiterId: req.body.waiterId || null,
-          status: isWaiter ? OrderStatus.PREPARING : OrderStatus.PENDING_APPROVAL,
+          status: OrderStatus.PREPARING,
           customerCount: customerCount || 1,
           notes: notes || "",
           createdAt: new Date().toISOString(),

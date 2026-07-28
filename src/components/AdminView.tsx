@@ -1720,53 +1720,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
         {activeTab === "audits" && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6" id="admin-audits-tab">
             <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm md:col-span-1 space-y-4 text-left">
-              <div>
-                <h3 className="font-bold text-zinc-900 text-sm flex items-center gap-1.5">
-                  <Map className="w-4 h-4 text-amber-500" /> Modo Funcionamiento QR
-                </h3>
-                <p className="text-xs text-zinc-400 mt-1">Define si los clientes pueden realizar pedidos autónomos desde el código QR de su mesa o si solo es de visualización.</p>
-              </div>
 
-              <div className="space-y-3 bg-zinc-50 p-3.5 rounded-2xl border border-zinc-100">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-zinc-700">Solo Menú QR (Lectura)</span>
-                  <button
-                    onClick={async () => {
-                      const newStatus = !state.onlyViewMenuQr;
-                      const res = await fetch("/api/admin/config/toggle-menu-qr", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ onlyViewMenuQr: newStatus, userName: "Administrador" })
-                      });
-                      if (res.ok) {
-                        onRefreshState();
-                      }
-                    }}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${
-                      state.onlyViewMenuQr ? "bg-amber-600" : "bg-zinc-300"
-                    }`}
-                  >
-                    <span
-                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                        state.onlyViewMenuQr ? "translate-x-6" : "translate-x-1"
-                      }`}
-                    />
-                  </button>
-                </div>
-                <div className="text-[10px] text-zinc-500 leading-relaxed font-semibold">
-                  {state.onlyViewMenuQr ? (
-                    <span className="text-amber-800 font-extrabold block">
-                      📖 Modo Menú Digital activo. Los clientes pueden ver la carta, precios, alérgenos y fotos, pero no pueden enviar pedidos desde el móvil.
-                    </span>
-                  ) : (
-                    <span className="text-zinc-600 block">
-                      🛒 Modo Autoservicio activo. Los clientes pueden armar su carro de compras y enviar comandas directamente a cocina.
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <hr className="border-zinc-100" />
 
               <div>
                 <h3 className="font-bold text-zinc-900 text-sm flex items-center gap-1.5">

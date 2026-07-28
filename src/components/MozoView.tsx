@@ -1353,11 +1353,6 @@ export default function MozoView({
               statusBg = "bg-red-50 border-red-200 text-red-900 hover:bg-red-100";
               statusText = "Ocupada";
               colorAccent = "bg-red-500";
-              if (tableOrder?.status === OrderStatus.PENDING_APPROVAL) {
-                statusBg = "bg-purple-50 border-purple-200 text-purple-900 hover:bg-purple-100";
-                statusText = "Por aprobar QR";
-                colorAccent = "bg-purple-500";
-              }
             } else if (tbl.status === TableStatus.BILL_REQUESTED) {
               statusBg = "bg-amber-50 border-amber-200 text-amber-900 hover:bg-amber-100 animate-pulse";
               statusText = "Pide Cuenta";
@@ -1960,24 +1955,7 @@ export default function MozoView({
                     </div>
                   </div>
 
-                  {/* APPROVAL ROW */}
-                  {activeOrder && activeOrder.status === OrderStatus.PENDING_APPROVAL && (
-                    <div className="bg-purple-50 border border-purple-200 rounded-2xl p-3 mb-4 flex flex-col gap-2">
-                      <div className="flex gap-1.5 items-start">
-                        <AlertCircle className="w-4 h-4 text-purple-600 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <span className="font-bold text-purple-900 text-xs block">Pedido QR del Cliente Pendiente</span>
-                          <p className="text-[10px] text-purple-600">Revisa la comanda del cliente y pruébala para enviarla a cocina.</p>
-                        </div>
-                      </div>
-                      <button
-                        onClick={handleApproveOrder}
-                        className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 rounded-lg text-xs"
-                      >
-                        Aprobar Pedido Cliente
-                      </button>
-                    </div>
-                  )}
+
 
                   {/* PRODUCTS LIST */}
                   <div className="space-y-2 mb-4">

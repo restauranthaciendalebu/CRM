@@ -64,5 +64,5 @@ export function recalculateOrderStatus(order: Order) {
     order.status = OrderStatus.PREPARING;
     return;
   }
-  if (order.status !== OrderStatus.PENDING_APPROVAL) order.status = OrderStatus.PREPARING;
+  order.status = OrderStatus.PREPARING;
 }

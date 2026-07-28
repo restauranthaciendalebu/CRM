@@ -591,26 +591,24 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
       </div>
  
       {/* Floating Waiter Actions */}
-      {!state.onlyViewMenuQr && (
-        <div className="max-w-4xl mx-auto px-4 -mt-6 relative z-10 flex gap-2">
-          <button
-            id="btn-call-waiter"
-            onClick={handleCallWaiter}
-            className="flex-1 bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-200/80 py-3.5 px-4 rounded-xl shadow-md font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
-          >
-            <Bell className="w-4 h-4 animate-bounce text-amber-600" />
-            {t.callWaiter}
-          </button>
-          <button
-            id="btn-request-bill"
-            onClick={handleRequestBill}
-            className="flex-1 bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-200/80 py-3.5 px-4 rounded-xl shadow-md font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
-          >
-            <Receipt className="w-4 h-4 text-emerald-600" />
-            {t.requestBill}
-          </button>
-        </div>
-      )}
+      <div className="max-w-4xl mx-auto px-4 -mt-6 relative z-10 flex gap-2">
+        <button
+          id="btn-call-waiter"
+          onClick={handleCallWaiter}
+          className="flex-1 bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-200/80 py-3.5 px-4 rounded-xl shadow-md font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
+        >
+          <Bell className="w-4 h-4 animate-bounce text-amber-600" />
+          {t.callWaiter}
+        </button>
+        <button
+          id="btn-request-bill"
+          onClick={handleRequestBill}
+          className="flex-1 bg-white hover:bg-zinc-50 text-zinc-900 border border-zinc-200/80 py-3.5 px-4 rounded-xl shadow-md font-bold text-xs flex items-center justify-center gap-2 transition-all active:scale-95 cursor-pointer"
+        >
+          <Receipt className="w-4 h-4 text-emerald-600" />
+          {t.requestBill}
+        </button>
+      </div>
  
       <div className="max-w-4xl mx-auto px-4 mt-8">
         {state.onlyViewMenuQr && (
@@ -859,9 +857,9 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                             e.stopPropagation();
                             handleOpenProductModal(rawP);
                           }}
-                          className="bg-amber-500 hover:bg-amber-600 text-stone-950 font-extrabold text-xs px-3 py-1.5 rounded-xl flex items-center gap-1 transition-all cursor-pointer"
+                          className="bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold text-[10px] px-3 py-1.5 rounded-xl flex items-center gap-1 transition-all cursor-pointer border border-stone-200/60"
                         >
-                          <Plus className="w-3.5 h-3.5" /> Agregar
+                          <Info className="w-3 h-3 text-stone-500" /> {t.verPlato}
                         </button>
                       </div>
                     </div>
@@ -1045,28 +1043,15 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                     </div>
 
                     {p.isAvailable ? (
-                      state.onlyViewMenuQr ? (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenProductModal(rawP);
-                          }}
-                          className="text-stone-800 bg-stone-100 hover:bg-stone-200 font-bold px-3 py-1.5 rounded-xl text-[10px] flex items-center gap-1 cursor-pointer transition-all border border-stone-200/60 font-sans"
-                        >
-                          <Info className="w-3 h-3 text-stone-500" /> {t.verPlato}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenProductModal(rawP);
-                          }}
-                          className="text-white font-bold p-2 rounded-xl text-xs transition-all cursor-pointer shadow-sm active:scale-95 flex items-center justify-center hover:brightness-105"
-                          style={{ backgroundColor: "var(--color-primary)" }}
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                      )
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleOpenProductModal(rawP);
+                        }}
+                        className="text-stone-800 bg-stone-100 hover:bg-stone-200 font-bold px-3 py-1.5 rounded-xl text-[10px] flex items-center gap-1 cursor-pointer transition-all border border-stone-200/60 font-sans"
+                      >
+                        <Info className="w-3 h-3 text-stone-500" /> {t.verPlato}
+                      </button>
                     ) : (
                       <span className="text-stone-400 text-[10px] font-extrabold tracking-wider uppercase">{t.pausado}</span>
                     )}
@@ -1304,32 +1289,12 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
 
                 {/* Actions Footer */}
                 <div className="p-4 border-t border-zinc-100 bg-zinc-50 flex gap-2 flex-shrink-0">
-                  {state.onlyViewMenuQr ? (
-                    <button
-                      onClick={() => setSelectedProduct(null)}
-                      className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all cursor-pointer text-center"
-                    >
-                      {t.backToMenu}
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => setSelectedProduct(null)}
-                        className="flex-1 py-3 text-zinc-500 hover:text-zinc-700 font-bold text-xs cursor-pointer text-center"
-                      >
-                        {language === 'es' ? 'Cancelar' : 'Cancel'}
-                      </button>
-                      <button
-                        onClick={handleAddToCart}
-                        className="flex-2 text-white font-extrabold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md transition-colors cursor-pointer hover:opacity-90"
-                        style={{ backgroundColor: "var(--color-primary)" }}
-                      >
-                        <span>{language === 'es' ? 'Agregar al Pedido' : 'Add to Order'}</span>
-                        <span>|</span>
-                        <span>{formatPrice((p.price + modalModifiers.reduce((sum, m) => sum + m.extraPrice, 0)) * modalQuantity)}</span>
-                      </button>
-                    </>
-                  )}
+                  <button
+                    onClick={() => setSelectedProduct(null)}
+                    className="w-full bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-3 px-4 rounded-xl text-xs transition-all cursor-pointer text-center"
+                  >
+                    {t.backToMenu}
+                  </button>
                 </div>
               </motion.div>
             </div>

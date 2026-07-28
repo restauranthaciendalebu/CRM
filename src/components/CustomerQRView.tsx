@@ -413,11 +413,11 @@ ${menuHTML}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      setExpandedProduct(product.id);
+                      setExpandedProduct(expandedProduct === product.id ? null : product.id);
                     }}
-                    className="bg-amber-500 text-zinc-950 font-bold text-xs px-3 py-1 rounded-xl flex items-center gap-1 cursor-pointer"
+                    className="bg-zinc-800 text-zinc-300 hover:text-white font-bold text-xs px-3 py-1 rounded-xl flex items-center gap-1 cursor-pointer border border-zinc-700"
                   >
-                    <Plus className="w-3.5 h-3.5" /> Agregar
+                    <Info className="w-3.5 h-3.5 text-amber-500" /> Ver Plato
                   </button>
                 </div>
               </div>

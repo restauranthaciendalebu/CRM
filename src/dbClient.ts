@@ -724,7 +724,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             id: newOrderId,
             tableId,
             waiterId: body.waiterId || null,
-            status: isWaiter ? OrderStatus.PREPARING : OrderStatus.PENDING_APPROVAL,
+            status: OrderStatus.PREPARING,
             customerCount: customerCount || 1,
             notes: notes || "",
             createdAt: new Date().toISOString(),
