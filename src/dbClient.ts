@@ -258,7 +258,13 @@ async function startFirestoreSubscriptions() {
         continue;
       }
       firestoreUnsubscribers.push(onSnapshot(collection(db, field), (snapshot) => {
-        (next as any)[field] = snapshot.docs.map((item) => item.data());
+        if (field === "notifications") {
+          const allNotifs = snapshot.docs.map((item) => item.data() as any);
+          const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+          (next as any)[field] = allNotifs.filter(n => !n.resolved && n.createdAt > twelveHoursAgo);
+        } else {
+          (next as any)[field] = snapshot.docs.map((item) => item.data());
+        }
         commit(field);
       }, (error) => {
         console.error(`No se pudo leer ${field}`, error);
@@ -1127,6 +1133,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     const notifResolveMatch = path.match(/^\/api\/notifications\/([^\/]+)\/resolve$/);
     if (notifResolveMatch && method === "POST") {
       const id = notifResolveMatch[1];
+      await resolveNotificationDirectly(id);
       const updated = await updateState(s => {
         if (!s.notifications) s.notifications = [];
         const targetNotif = s.notifications.find(n => n.id === id);
@@ -2057,5 +2064,34 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       return createResponse({ error: "Demasiados intentos. Espera unos minutos e intenta nuevamente." }, 429);
     }
     return createResponse({ error: error.message || "Error interno del servidor simulado" }, 500);
+  }
+}
+
+export async function resolveNotificationDirectly(notifId: string, tableNumber?: number) {
+  try {
+    if (currentCachedState?.notifications) {
+      const targetNotif = currentCachedState.notifications.find(n => n.id === notifId);
+      const tblNum = tableNumber || targetNotif?.tableNumber;
+
+      const toResolve = currentCachedState.notifications.filter(
+        n => n.id === notifId || (tblNum && n.tableNumber === tblNum)
+      );
+
+      toResolve.forEach(n => { n.resolved = true; });
+      currentCachedState.notifications = currentCachedState.notifications.filter(n => !n.resolved);
+      publishState(currentCachedState);
+
+      for (const n of toResolve) {
+        try {
+          await setDoc(doc(db, "notifications", n.id), { resolved: true }, { merge: true });
+        } catch {
+          try {
+            await deleteDoc(doc(db, "notifications", n.id));
+          } catch {}
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error in resolveNotificationDirectly:", err);
   }
 }

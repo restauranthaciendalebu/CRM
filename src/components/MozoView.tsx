@@ -51,6 +51,7 @@ import { isDirectServiceProduct } from "../orderUtils";
 import AddTableModal from "./AddTableModal";
 import WaiterReceiptHistory from "./WaiterReceiptHistory";
 import { allocateRemainingAdjustment, getNextPaymentAmount, getRemainingBalance } from "../billingUtils";
+import { resolveNotificationDirectly } from "../dbClient";
 
 interface MozoViewProps {
   state: RestaurantState;
@@ -870,23 +871,14 @@ export default function MozoView({
     const targetTableNumber = targetNotif?.tableNumber;
 
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-      await applyDirectStateUpdate((nextState) => {
-        if (!nextState.notifications) nextState.notifications = [];
-        nextState.notifications.forEach((n) => {
-          if (n.id === notifId || (targetTableNumber && n.tableNumber === targetTableNumber)) {
-            n.resolved = true;
-          }
-        });
-      });
+      await resolveNotificationDirectly(notifId, targetTableNumber);
     }
     try {
-      const res = await fetch(`/api/notifications/${notifId}/resolve`, {
+      await fetch(`/api/notifications/${notifId}/resolve`, {
         method: "POST"
       });
-      if (res.ok) {
-        showBanner("Atención de mesa registrada.");
-        refreshStateIfNeeded();
-      }
+      showBanner("Atención de mesa registrada.");
+      refreshStateIfNeeded();
     } catch (e) {
       showBanner("Atención de mesa registrada.");
     }
