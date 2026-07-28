@@ -5,7 +5,8 @@ import './index.css';
 
 async function bootstrap() {
   const root = createRoot(document.getElementById('root')!);
-  const directClientPromise = import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === 'true'
+  const isDirectApi = import.meta.env.VITE_USE_FIRESTORE_DIRECT_API !== 'false' || (typeof window !== 'undefined' && window.location.hostname.includes('github.io'));
+  const directClientPromise = isDirectApi
     ? import('./dbClient.ts')
     : null;
 
