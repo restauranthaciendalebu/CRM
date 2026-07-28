@@ -170,7 +170,7 @@ function AppContent() {
         </div>
       )}
 
-      {activeUser.role === "ADMIN" && (
+      {(activeUser.role === "ADMIN" || (activeUser.permissions && activeUser.permissions.length > 0)) && (
         <RoleSelector
           currentRole={currentRole}
           onChangeRole={setCurrentRole}
@@ -210,6 +210,7 @@ function AppContent() {
             activeUser={activeUser}
             onLoginSuccess={handleLoginSuccess}
             onLogout={handleLogout}
+            onChangeRole={setCurrentRole}
           />
         )}
 

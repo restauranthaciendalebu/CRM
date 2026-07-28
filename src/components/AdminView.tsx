@@ -67,7 +67,13 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const hasPermission = (permission: string) => {
     if (!activeUser) return false;
     if (activeUser.role === Role.ADMIN) return true;
-    return activeUser.permissions?.includes(permission) || false;
+    const perms = activeUser.permissions || [];
+    if (perms.includes(permission)) return true;
+    if (permission === "manage_menu" && (perms.includes("products") || perms.includes("menu") || perms.includes("carta"))) return true;
+    if (permission === "manage_inventory" && (perms.includes("inventory") || perms.includes("inventario"))) return true;
+    if (permission === "view_reports" && (perms.includes("reports") || perms.includes("ventas"))) return true;
+    if (permission === "manage_staff" && (perms.includes("staff") || perms.includes("personal"))) return true;
+    return false;
   };
 
   const visibleTabs = [

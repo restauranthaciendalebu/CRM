@@ -13,7 +13,8 @@ import {
   OrderItem,
   SelectedItemModifier,
   Reservation,
-  ReservationStatus
+  ReservationStatus,
+  Role
 } from "../types";
 import { 
   Grid, 
@@ -41,7 +42,8 @@ import {
   CalendarDays,
   Phone,
   BookOpen,
-  UserPlus
+  UserPlus,
+  ShieldCheck
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { printThermalReceipt, printThermalZetaReport } from "./ThermalReceipt";
@@ -56,6 +58,7 @@ interface MozoViewProps {
   activeUser: User | null;
   onLoginSuccess: (user: User) => void;
   onLogout: () => void;
+  onChangeRole?: (role: "client" | "waiter" | "kitchen" | "admin") => void;
 }
 
 const isCookingItemStatus = (status: OrderItemStatus) =>
@@ -68,7 +71,8 @@ export default function MozoView({
   onRefreshState, 
   activeUser, 
   onLoginSuccess, 
-  onLogout 
+  onLogout,
+  onChangeRole
 }: MozoViewProps) {
 
   const applyDirectStateUpdate = async (mutator: (state: RestaurantState) => void) => {
@@ -1210,6 +1214,16 @@ export default function MozoView({
             >
               <ReceiptText className="w-4 h-4" />
             </button>
+
+            {onChangeRole && (activeUser?.role === Role.ADMIN || (activeUser?.permissions && activeUser.permissions.length > 0)) && (
+              <button
+                onClick={() => onChangeRole("admin")}
+                className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-extrabold text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                title="Gestionar carta, precios y disponibilidad"
+              >
+                <ShieldCheck className="w-4 h-4" /> Administrar Carta
+              </button>
+            )}
 
             <button
               onClick={onLogout}
