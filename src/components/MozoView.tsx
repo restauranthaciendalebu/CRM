@@ -1612,6 +1612,18 @@ export default function MozoView({
                           <Trash2 className="w-3.5 h-3.5" /> Cancelar Reserva
                         </button>
                       </div>
+
+                      {/* Walk-in override: seat someone else without touching the reservation */}
+                      <button
+                        onClick={() => {
+                          setOpeningGuestCount(2);
+                          setIsOpeningTable(true);
+                          setIsReservingTable(false);
+                        }}
+                        className="w-full text-zinc-500 hover:text-zinc-700 font-bold py-2 text-xs transition-colors cursor-pointer underline underline-offset-2"
+                      >
+                        Ocupar esta mesa igual (llegó otra persona)
+                      </button>
                     </div>
                   ) : (
                     /* ======== FREE: Open or Reserve ======== */

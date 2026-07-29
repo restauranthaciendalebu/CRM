@@ -51,8 +51,13 @@ import {
   Lock,
   Key,
   Star,
-  X
+  X,
+  Loader2,
+  Camera,
+  Check
 } from "lucide-react";
+import { searchUnsplashPhotos, trackUnsplashDownload, type UnsplashPhotoResult } from "../unsplashUtils";
+import { uploadProductImage } from "../imageUploadUtils";
 
 interface AdminViewProps {
   state: RestaurantState;
@@ -127,6 +132,11 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [prodImageUrl, setProdImageUrl] = useState("");
   const [prodAllergens, setProdAllergens] = useState<string[]>([]);
   const [prodIsRecommended, setProdIsRecommended] = useState(false);
+  const [isSearchingPhotos, setIsSearchingPhotos] = useState(false);
+  const [photoSearchResults, setPhotoSearchResults] = useState<UnsplashPhotoResult[]>([]);
+  const [photoSearchQuery, setPhotoSearchQuery] = useState("");
+  const [photoActionError, setPhotoActionError] = useState("");
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [prodError, setProdError] = useState("");
   const [isProductSaving, setIsProductSaving] = useState(false);
 
@@ -677,6 +687,14 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   };
 
   // 3.6 Product action handlers
+  const resetPhotoTools = () => {
+    setPhotoSearchResults([]);
+    setPhotoSearchQuery("");
+    setPhotoActionError("");
+    setIsSearchingPhotos(false);
+    setIsUploadingPhoto(false);
+  };
+
   const openAddProductModal = () => {
     setEditingProductModal(null);
     setProdName("");
@@ -687,6 +705,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setProdAllergens([]);
     setProdIsRecommended(false);
     setProdError("");
+    resetPhotoTools();
     setIsProductModalOpen(true);
   };
 
@@ -700,7 +719,47 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setProdAllergens(product.allergens || []);
     setProdIsRecommended(!!product.isRecommended);
     setProdError("");
+    resetPhotoTools();
     setIsProductModalOpen(true);
+  };
+
+  const handleSearchProductPhotos = async () => {
+    const query = photoSearchQuery.trim() || prodName.trim();
+    if (!query) {
+      setPhotoActionError("Escribe el nombre del plato para buscar fotos.");
+      return;
+    }
+    setIsSearchingPhotos(true);
+    setPhotoActionError("");
+    try {
+      const results = await searchUnsplashPhotos(query);
+      setPhotoSearchResults(results);
+      if (results.length === 0) {
+        setPhotoActionError("No se encontraron fotos para esa búsqueda. Prueba con otro término.");
+      }
+    } catch (e: any) {
+      setPhotoActionError(e.message || "No se pudo buscar fotos.");
+    } finally {
+      setIsSearchingPhotos(false);
+    }
+  };
+
+  const handleSelectUnsplashPhoto = (photo: UnsplashPhotoResult) => {
+    trackUnsplashDownload(photo.downloadLocation);
+    setProdImageUrl(photo.fullUrl);
+  };
+
+  const handleUploadProductPhoto = async (file: File) => {
+    setIsUploadingPhoto(true);
+    setPhotoActionError("");
+    try {
+      const url = await uploadProductImage(file);
+      setProdImageUrl(url);
+    } catch (e: any) {
+      setPhotoActionError(e.message || "No se pudo subir la foto.");
+    } finally {
+      setIsUploadingPhoto(false);
+    }
   };
 
   const handleSaveProduct = async () => {
@@ -2204,15 +2263,110 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-zinc-700">URL de Imagen (Opcional)</label>
-                <input
-                  type="text"
-                  placeholder="https://ejemplo.com/foto.jpg"
-                  value={prodImageUrl}
-                  onChange={(e) => setProdImageUrl(e.target.value)}
-                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-955 font-mono text-zinc-950"
-                />
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-zinc-700">Foto del plato (Opcional)</label>
+
+                {prodImageUrl && (
+                  <div className="relative w-full h-32 rounded-xl overflow-hidden border border-zinc-200 bg-zinc-100">
+                    <img src={prodImageUrl} alt="Vista previa" className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => setProdImageUrl("")}
+                      className="absolute top-1.5 right-1.5 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Real photo search */}
+                <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-2.5 space-y-2">
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      placeholder={prodName.trim() || "Buscar por nombre del plato..."}
+                      value={photoSearchQuery}
+                      onChange={(e) => setPhotoSearchQuery(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSearchProductPhotos(); } }}
+                      className="flex-1 min-w-0 bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSearchProductPhotos}
+                      disabled={isSearchingPhotos}
+                      className="shrink-0 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-zinc-950 font-bold text-xs px-3 rounded-lg cursor-pointer flex items-center gap-1"
+                    >
+                      {isSearchingPhotos ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                      Buscar fotos reales
+                    </button>
+                  </div>
+
+                  {photoSearchResults.length > 0 && (
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {photoSearchResults.map((photo) => {
+                        const isSelected = prodImageUrl === photo.fullUrl;
+                        return (
+                          <button
+                            type="button"
+                            key={photo.id}
+                            onClick={() => handleSelectUnsplashPhoto(photo)}
+                            className={`relative h-16 rounded-lg overflow-hidden border-2 cursor-pointer ${
+                              isSelected ? "border-amber-500" : "border-transparent hover:border-zinc-300"
+                            }`}
+                          >
+                            <img src={photo.thumbUrl} alt="" className="w-full h-full object-cover" />
+                            {isSelected && (
+                              <span className="absolute inset-0 bg-amber-500/30 flex items-center justify-center">
+                                <Check className="w-5 h-5 text-white drop-shadow" />
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <p className="text-[9px] text-zinc-400">Fotos reales de Unsplash. Elige la que más se parezca al plato.</p>
+                </div>
+
+                {/* Upload own photo */}
+                <label className="flex items-center justify-center gap-1.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold text-xs py-2.5 rounded-xl cursor-pointer transition-colors">
+                  {isUploadingPhoto ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" /> Subiendo foto...
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="w-3.5 h-3.5" /> Subir foto propia (celular o computador)
+                    </>
+                  )}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={isUploadingPhoto}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (file) handleUploadProductPhoto(file);
+                    }}
+                  />
+                </label>
+
+                {photoActionError && (
+                  <p className="text-[10px] text-red-600 font-semibold">{photoActionError}</p>
+                )}
+
+                <details className="text-xs">
+                  <summary className="text-zinc-400 font-semibold cursor-pointer select-none">O pegar una URL manualmente</summary>
+                  <input
+                    type="text"
+                    placeholder="https://ejemplo.com/foto.jpg"
+                    value={prodImageUrl}
+                    onChange={(e) => setProdImageUrl(e.target.value)}
+                    className="mt-1.5 w-full bg-zinc-50 border border-zinc-200 rounded-xl p-3 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 font-mono text-zinc-950"
+                  />
+                </details>
               </div>
 
               <button
