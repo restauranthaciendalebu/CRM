@@ -831,12 +831,13 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
         setIsProductModalOpen(false);
         onRefreshState();
       } else {
-        setIsProductModalOpen(false);
-        onRefreshState();
+        // Surface the real reason instead of silently closing the modal —
+        // that used to hide permission-denied errors as if nothing happened.
+        const err = await res.json().catch(() => ({}));
+        setProdError(err.error || "No se pudo guardar el producto.");
       }
     } catch (e) {
-      setIsProductModalOpen(false);
-      onRefreshState();
+      setProdError("Error de conexión al guardar el producto.");
     } finally {
       setIsProductSaving(false);
     }

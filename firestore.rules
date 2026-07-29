@@ -38,6 +38,26 @@ service cloud.firestore {
       return isStaff() && role() == "KITCHEN";
     }
 
+    // Mirrors the client's hasPermission("manage_menu") check: an admin
+    // always qualifies, or any staff account the admin explicitly granted
+    // menu-management rights to via Personal → Permisos. Without this, the
+    // permission toggle in the UI does nothing — the write still gets
+    // rejected here, silently, no matter what the app shows on screen.
+    function hasMenuPermission() {
+      return isStaff() && (
+        role() == "ADMIN" ||
+        (
+          get(accessPath()).data.permissions is list &&
+          (
+            "manage_menu" in get(accessPath()).data.permissions ||
+            "products" in get(accessPath()).data.permissions ||
+            "menu" in get(accessPath()).data.permissions ||
+            "carta" in get(accessPath()).data.permissions
+          )
+        )
+      );
+    }
+
     match /staffDirectory/{userId} {
       allow read: if true;
       allow write: if isAdmin();
@@ -55,12 +75,12 @@ service cloud.firestore {
 
     match /categories/{categoryId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if hasMenuPermission();
     }
 
     match /products/{productId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if hasMenuPermission();
     }
 
     match /config/{configId} {
