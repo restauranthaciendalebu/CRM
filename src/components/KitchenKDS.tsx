@@ -36,10 +36,14 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
     }
   };
 
-  const refreshDirectState = async () => {
+  // Undo the optimistic preview after an action fails. This used to trigger a
+  // full-database resync, which meant a single failure (a quota error, a
+  // dropped connection) re-read every collection and made the next failure
+  // more likely — one bad action could snowball into an outage.
+  const revertDirectState = async () => {
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
       const client = await import("../dbClient");
-      await client.refreshStateFromServer();
+      client.revertLocalStateUpdate();
     }
   };
 
@@ -252,13 +256,13 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
       });
       if (!res.ok) {
         if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-          await refreshDirectState();
+          await revertDirectState();
         }
         console.error("No se pudo actualizar el estado del item");
       }
     } catch (e) {
       if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-        await refreshDirectState();
+        await revertDirectState();
       }
       console.error(e);
     }

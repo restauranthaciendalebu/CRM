@@ -1,5 +1,5 @@
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "./firebase";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { app } from "./firebase";
 
 const MAX_DIMENSION = 1280;
 const JPEG_QUALITY = 0.82;
@@ -26,10 +26,25 @@ async function compressImageFile(file: File): Promise<Blob> {
   return blob || file;
 }
 
+// Resolved on first upload rather than at module load: Storage may not be
+// enabled on the Firebase project yet, and getStorage() throws when it isn't.
+// Initialising it eagerly would take down every module that transitively
+// imports firebase.ts — including the whole Firestore data layer.
+function resolveStorage() {
+  try {
+    return getStorage(app);
+  } catch {
+    throw new Error(
+      "El almacenamiento de fotos no está habilitado en Firebase. Actívalo en la consola para poder subir imágenes propias."
+    );
+  }
+}
+
 export async function uploadProductImage(file: File): Promise<string> {
   if (!file.type.startsWith("image/")) {
     throw new Error("El archivo seleccionado no es una imagen.");
   }
+  const storage = resolveStorage();
   const compressed = await compressImageFile(file);
   const fileName = `product-images/${Date.now()}_${Math.random().toString(36).substring(2, 9)}.jpg`;
   const fileRef = ref(storage, fileName);

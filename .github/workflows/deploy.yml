@@ -35,6 +35,11 @@ jobs:
         env:
           GITHUB_PAGES: 'true'
           VITE_USE_FIRESTORE_DIRECT_API: 'true'
+          # Vite inlines this into the public bundle, so it is readable by
+          # anyone who opens the deployed site. That is inherent to Unsplash's
+          # client-side Client-ID auth — keep it to the Access Key, never the
+          # Secret Key, and rotate it if the hourly limit starts running out.
+          VITE_UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
         run: npx vite build
 
       - name: Setup Pages

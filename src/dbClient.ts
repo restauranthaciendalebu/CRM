@@ -32,6 +32,7 @@ import {
   OrderItem,
   Table,
   Customer,
+  Product,
   User,
   RecoveryRecord,
   RecoverableCollection,
@@ -47,6 +48,14 @@ import { shouldArchiveEntityChange } from "./recoveryUtils";
 // Minimum gap required between two reservations on the same table, so a
 // table can't be double-booked for overlapping dining windows.
 const RESERVATION_CONFLICT_WINDOW_MS = 90 * 60 * 1000;
+
+// Circuit breaker for full-collection resyncs. A full resync re-reads every
+// document of every collection, so it must never run in a tight loop nor
+// while Firestore is already refusing requests.
+const QUOTA_COOLDOWN_MS = 2 * 60 * 1000;
+const FULL_RESYNC_MIN_INTERVAL_MS = 30 * 1000;
+let quotaBlockedUntil = 0;
+let lastFullResyncAt = 0;
 
 // Cache local of the database state
 let currentCachedState: RestaurantState | null = null;
@@ -174,6 +183,15 @@ export function applyLocalStateUpdate(mutator: (state: RestaurantState) => void)
   publishState(nextState, false);
 }
 
+// Discards a UI-only overlay left by applyLocalStateUpdate after the action it
+// previewed turned out to fail, re-publishing the authoritative cached state.
+// applyLocalStateUpdate never touches that cache, so this needs zero reads —
+// it replaces a full-database resync that used to run on every failed action.
+export function revertLocalStateUpdate() {
+  if (!currentCachedState) return;
+  publishState(currentCachedState, true);
+}
+
 async function getReadableCollections(): Promise<readonly CollectionField[]> {
   const currentUser = auth.currentUser;
   if (!currentUser || currentUser.isAnonymous) {
@@ -189,8 +207,18 @@ async function getReadableCollections(): Promise<readonly CollectionField[]> {
   return PUBLIC_COLLECTIONS;
 }
 
+// Full resync: re-reads every document of every readable collection. This is
+// expensive and deliberately rate-limited — it is a recovery tool, not
+// something to run on the failure path of an ordinary action.
 export async function refreshStateFromServer() {
   if (!currentCachedState) return;
+  const now = Date.now();
+  if (now < quotaBlockedUntil) {
+    console.warn("Resync completo omitido: Firestore está rechazando peticiones por cuota.");
+    return;
+  }
+  if (now - lastFullResyncAt < FULL_RESYNC_MIN_INTERVAL_MS) return;
+  lastFullResyncAt = now;
   const next = cloneState(currentCachedState);
   const fields = await getReadableCollections();
   await Promise.all(fields.map(async (field) => {
@@ -387,6 +415,37 @@ function replaceEntity(state: RestaurantState, field: CollectionField, id: strin
   (state as any)[field] = entities;
 }
 
+// Undoes an optimistic update whose write failed, touching only the documents
+// that update actually changed — normally one or two.
+//
+// Where possible each one is re-read, because the most common failure is
+// contention: the write lost a race to another device, which means the remote
+// document genuinely moved on and the value we held before is already stale.
+// When that read isn't available (quota exhausted, offline) or the mutation
+// spanned an unusually large number of documents, it falls back to the
+// pre-mutation values already in memory, which costs nothing.
+const MAX_ROLLBACK_READS = 10;
+
+async function rollbackFailedChanges(changes: StateChange[], base: RestaurantState) {
+  const next = cloneState(currentCachedState || base);
+  const canRead = Date.now() >= quotaBlockedUntil && changes.length <= MAX_ROLLBACK_READS;
+
+  const restored = await Promise.all(changes.map(async (change) => {
+    if (!canRead) return change.before;
+    try {
+      const snapshot = await getDoc(doc(db, change.field, change.id));
+      return snapshot.exists() ? snapshot.data() : undefined;
+    } catch {
+      return change.before;
+    }
+  }));
+
+  changes.forEach((change, index) => {
+    replaceEntity(next, change.field, change.id, restored[index]);
+  });
+  publishState(next, true);
+}
+
 // Atomic transaction helper for mutating state safely
 async function updateState(mutator: (state: RestaurantState) => void): Promise<RestaurantState> {
   if (!auth.currentUser) {
@@ -452,9 +511,19 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
 
     if (isQuotaOrNetError) {
       console.warn("⚠️ Firestore quota superada. Guardando actualización en memoria local:", error);
+      // Stop any full-collection resync for a while. Those re-read every
+      // document, so running them while the quota is already exhausted is
+      // what turns one failure into a cascade of them.
+      quotaBlockedUntil = Date.now() + QUOTA_COOLDOWN_MS;
       publishState(optimisticState, true);
       return optimisticState;
     }
+
+    // The write never landed, so undo the entities we optimistically published
+    // above — reading back only those specific documents. Recovering from a
+    // failure by re-reading the entire database is precisely what amplified a
+    // single error into an outage.
+    await rollbackFailedChanges(preliminaryChanges, base);
     throw error;
   }
 
@@ -1601,6 +1670,65 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         }
       });
       return createResponse({ success: true, product: updatedProd });
+    }
+
+    const productDeleteMatch = path.match(/^\/api\/products\/([^\/]+)\/delete$/);
+    if (productDeleteMatch && method === "POST") {
+      const id = productDeleteMatch[1];
+      const { operatorName } = body;
+      let errorMsg = "";
+      let deletedProduct: Product | undefined;
+
+      await updateState(s => {
+        const index = s.products.findIndex(p => p.id === id);
+        if (index === -1) {
+          errorMsg = "Producto no encontrado";
+          return;
+        }
+        const product = s.products[index];
+
+        // Past receipts and sales reports resolve item names and prices by
+        // looking the product up here. Deleting one that was ever ordered
+        // would silently blank those line items and undercount revenue, so
+        // that case is refused — pausing already hides it from the menu.
+        const timesOrdered = s.orders.reduce(
+          (count, order) => count + order.items.filter(item => item.productId === id).length,
+          0,
+        );
+        if (timesOrdered > 0) {
+          errorMsg = `No se puede eliminar "${product.name}": aparece en ${timesOrdered} pedido(s) del historial y las boletas quedarían incompletas. Pausa el producto para sacarlo de la carta sin perder los registros.`;
+          return;
+        }
+
+        deletedProduct = { ...product };
+
+        if (!s.recoveryArchive) s.recoveryArchive = [];
+        const recoveryId = `recovery_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+        s.recoveryArchive.push({
+          id: recoveryId,
+          collection: "products",
+          documentId: product.id,
+          operation: "DELETE",
+          snapshot: sanitizeSnapshot(product),
+          createdAt: new Date().toISOString(),
+          actorUid: auth.currentUser?.uid,
+        });
+
+        s.products.splice(index, 1);
+
+        if (!s.auditLogs) s.auditLogs = [];
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          action: "Producto Eliminado",
+          details: `Se eliminó el producto "${product.name}" por ${operatorName || "Administrador"}. Se puede restaurar desde Auditoría & Backups.`,
+          createdAt: new Date().toISOString()
+        });
+      });
+
+      if (errorMsg) {
+        return createResponse({ error: errorMsg }, 400);
+      }
+      return createResponse({ success: true, product: deletedProduct });
     }
 
     // 11.5 Admin User/Staff Management

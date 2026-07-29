@@ -83,10 +83,14 @@ export default function MozoView({
     }
   };
 
-  const refreshDirectState = async () => {
+  // Undo the optimistic preview after an action fails. This used to trigger a
+  // full-database resync, which meant a single failure (a quota error, a
+  // dropped connection) re-read every collection and made the next failure
+  // more likely — one bad action could snowball into an outage.
+  const revertDirectState = async () => {
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
       const client = await import("../dbClient");
-      await client.refreshStateFromServer();
+      client.revertLocalStateUpdate();
     }
   };
   
@@ -463,11 +467,11 @@ export default function MozoView({
       } else {
         const err = await res.json().catch(() => ({}));
         showBanner(err.error || "Error al guardar la reserva.", "error");
-        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await revertDirectState();
       }
     } catch (e) {
       showBanner("Error de conexión al guardar reserva.", "error");
-      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await revertDirectState();
     } finally {
       setIsSavingReservation(false);
     }
@@ -517,11 +521,11 @@ export default function MozoView({
       } else {
         const err = await res.json().catch(() => ({}));
         showBanner(err.error || "Error al cancelar reserva.", "error");
-        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await revertDirectState();
       }
     } catch (e) {
       showBanner("Error de conexión.", "error");
-      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await revertDirectState();
     }
   };
 
@@ -581,7 +585,7 @@ export default function MozoView({
       }
     } catch (e) {
       showBanner("Error al registrar llegada.", "error");
-      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await revertDirectState();
     }
   };
 
@@ -619,14 +623,14 @@ export default function MozoView({
       });
       if (!res.ok) {
         const error = await res.json();
-        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await revertDirectState();
         showBanner(error.error || "No se pudo actualizar los comensales.", "error");
       } else {
         showBanner(`Mesa actualizada a ${nextCount} comensales.`);
         refreshStateIfNeeded();
       }
     } catch {
-      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await revertDirectState();
       showBanner("Error al actualizar los comensales.", "error");
     } finally {
       setIsUpdatingGuestCount(false);
@@ -766,14 +770,14 @@ export default function MozoView({
       });
       if (!res.ok) {
         const error = await res.json();
-        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+        if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await revertDirectState();
         showBanner(error.error || "No se pudo eliminar el ítem.", "error");
       } else {
         showBanner(removingOne ? "Se quitó una unidad y se actualizó la comanda." : "Ítem eliminado y comanda actualizada.");
         refreshStateIfNeeded();
       }
     } catch {
-      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
+      if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await revertDirectState();
       showBanner("Error al eliminar el ítem.", "error");
     } finally {
       setPendingOrderActionIds((previous) => previous.filter((id) => id !== itemId));
@@ -853,13 +857,13 @@ export default function MozoView({
       });
       if (!res.ok) {
         if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-          await refreshDirectState();
+          await revertDirectState();
         }
         showBanner("No se pudo cambiar el estado.", "error");
       }
     } catch (e) {
       if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
-        await refreshDirectState();
+        await revertDirectState();
       }
       showBanner("Error al cambiar estado.", "error");
     }

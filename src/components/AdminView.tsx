@@ -132,6 +132,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [prodImageUrl, setProdImageUrl] = useState("");
   const [prodAllergens, setProdAllergens] = useState<string[]>([]);
   const [prodIsRecommended, setProdIsRecommended] = useState(false);
+  const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
+  const [deleteProductError, setDeleteProductError] = useState("");
   const [isSearchingPhotos, setIsSearchingPhotos] = useState(false);
   const [photoSearchResults, setPhotoSearchResults] = useState<UnsplashPhotoResult[]>([]);
   const [photoSearchQuery, setPhotoSearchQuery] = useState("");
@@ -564,6 +566,26 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     }
   };
 
+  const handleDeleteProduct = async (product: Product) => {
+    setDeletingProduct(null);
+    setDeleteProductError("");
+    try {
+      const res = await fetch(`/api/products/${product.id}/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operatorName: activeUser?.name || "Administrador" })
+      });
+      if (res.ok) {
+        onRefreshState();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setDeleteProductError(err.error || "No se pudo eliminar el producto.");
+      }
+    } catch (e) {
+      setDeleteProductError("Error de conexión al eliminar el producto.");
+    }
+  };
+
   const handleToggleRecommended = async (product: Product) => {
     const nextRecommended = !product.isRecommended;
 
@@ -723,6 +745,18 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setIsProductModalOpen(true);
   };
 
+  // Unsplash indexes its catalogue in English, so a bare Spanish dish name
+  // often matches nothing food-related at all ("Lomo a lo Pobre" returns
+  // buildings). Anchoring every search to food or drink keeps the results at
+  // least edible, which is the floor for a customer-facing menu.
+  const DRINK_CATEGORY_HINTS = ["bebida", "trago", "bar", "vino", "cerveza", "coctel", "cóctel", "jugo", "cafe", "café"];
+
+  const buildPhotoQuery = (raw: string) => {
+    const categoryName = (state.categories.find((c) => c.id === prodCategoryId)?.name || "").toLowerCase();
+    const isDrink = DRINK_CATEGORY_HINTS.some((hint) => categoryName.includes(hint));
+    return `${raw} ${isDrink ? "drink" : "food"}`.trim();
+  };
+
   const handleSearchProductPhotos = async () => {
     const query = photoSearchQuery.trim() || prodName.trim();
     if (!query) {
@@ -732,7 +766,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setIsSearchingPhotos(true);
     setPhotoActionError("");
     try {
-      const results = await searchUnsplashPhotos(query);
+      const results = await searchUnsplashPhotos(buildPhotoQuery(query));
       setPhotoSearchResults(results);
       if (results.length === 0) {
         setPhotoActionError("No se encontraron fotos para esa búsqueda. Prueba con otro término.");
@@ -1207,6 +1241,14 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                               className="w-8 h-8 rounded-lg border border-zinc-200 bg-white text-zinc-400 hover:text-zinc-600 flex items-center justify-center cursor-pointer"
                             >
                               <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={() => { setDeleteProductError(""); setDeletingProduct(p); }}
+                              title="Eliminar producto"
+                              className="w-8 h-8 rounded-lg border border-zinc-200 bg-white text-zinc-400 hover:text-red-600 hover:border-red-200 flex items-center justify-center cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
 
                             <button
@@ -2194,6 +2236,53 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
         </div>
       )}
 
+      {/* MODAL: CONFIRMAR ELIMINACIÓN DE PRODUCTO */}
+      {deletingProduct && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-zinc-200 p-5 text-left">
+            <h3 className="text-base font-extrabold text-zinc-900">Eliminar «{deletingProduct.name}»</h3>
+            <p className="text-xs text-zinc-500 mt-2">
+              Se quitará de la carta y del panel. Si alguna vez se vendió, no podrá eliminarse
+              para no dañar las boletas del historial — en ese caso conviene pausarlo.
+            </p>
+            <p className="text-[11px] text-zinc-400 mt-2">
+              Podrás restaurarlo desde <strong className="text-zinc-600">Auditoría &amp; Backups</strong>.
+            </p>
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setDeletingProduct(null)}
+                className="flex-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold py-2.5 rounded-xl text-xs cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleDeleteProduct(deletingProduct)}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-2.5 rounded-xl text-xs cursor-pointer"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteProductError && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-zinc-200 p-5 text-left">
+            <h3 className="text-base font-extrabold text-zinc-900 flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500" /> No se pudo eliminar
+            </h3>
+            <p className="text-xs text-zinc-600 mt-2 leading-relaxed">{deleteProductError}</p>
+            <button
+              onClick={() => setDeleteProductError("")}
+              className="w-full mt-5 bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-2.5 rounded-xl text-xs cursor-pointer"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: AGREGAR / EDITAR PRODUCTO */}
       {isProductModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
@@ -2326,7 +2415,11 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                     </div>
                   )}
 
-                  <p className="text-[9px] text-zinc-400">Fotos reales de Unsplash. Elige la que más se parezca al plato.</p>
+                  <p className="text-[9px] text-zinc-400">
+                    Fotos genéricas de Unsplash: casi no hay comida chilena en su catálogo.
+                    Buscar en inglés y por lo que se ve en el plato («grilled steak fries egg»)
+                    da mejores resultados que el nombre en español. Para el plato real, sube tu propia foto.
+                  </p>
                 </div>
 
                 {/* Upload own photo */}
