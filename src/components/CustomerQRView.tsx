@@ -21,7 +21,9 @@ import { getOptimizedImageUrl } from "../imageUtils";
 
 interface CustomerQRViewProps {
   state: RestaurantState;
-  tableNumber: number;
+  // null = the general QR (bar, entrance, outside the restaurant): pure menu
+  // browsing, no table to call a waiter to or request a bill for.
+  tableNumber: number | null;
   onRefreshState: () => void;
 }
 
@@ -29,6 +31,7 @@ interface CustomerQRViewProps {
 type NoticeKind = "info" | "success" | "error";
 
 export default function CustomerQRView({ state, tableNumber, onRefreshState }: CustomerQRViewProps) {
+  const isGeneralMenu = tableNumber === null;
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [expandedProduct, setExpandedProduct] = useState<string | null>(null);
@@ -298,7 +301,7 @@ ${menuHTML}
           <p className="text-zinc-400 text-xs mt-2 italic max-w-xs mx-auto leading-relaxed">
             "Fuegos de la tradición campera, cortes premium madurados y los más selectos ingredientes de nuestra tierra chilena."
           </p>
-          {activeTable && (
+          {!isGeneralMenu && activeTable && (
             <div className="mt-4 inline-flex items-center gap-2 bg-black/30 backdrop-blur-sm border border-amber-500/25 rounded-full px-4 py-1.5">
               <UtensilsCrossed className="w-3.5 h-3.5 text-amber-500" />
               <span className="text-amber-400 text-xs font-bold">Mesa {tableNumber}</span>
@@ -423,7 +426,7 @@ ${menuHTML}
       )}
 
       {/* ── Menu content ── */}
-      <div className="px-4 pb-40">
+      <div className={`px-4 ${isGeneralMenu ? "pb-10" : "pb-40"}`}>
         {categoriesWithProducts.length === 0 ? (
           <div className="text-center py-20 text-zinc-500">
             <Search className="w-10 h-10 mx-auto mb-3 text-zinc-700" />
@@ -535,51 +538,59 @@ ${menuHTML}
         )}
       </div>
 
-      {/* ── Floating action bar (Waiter / Bill) ── */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 bg-zinc-950/95 backdrop-blur-xl border-t border-zinc-800/50 px-4 py-3 safe-bottom">
-        <div className="max-w-lg mx-auto flex gap-3">
-          <button
-            onClick={handleCallWaiter}
-            disabled={waiterCooldown}
-            className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm transition-all cursor-pointer ${
-              waiterCooldown
-                ? "bg-zinc-800 text-zinc-600"
-                : "bg-amber-500 hover:bg-amber-400 text-zinc-900 active:scale-[0.97] shadow-lg shadow-amber-500/20"
-            }`}
-          >
-            <Bell className={`w-4 h-4 ${!waiterCooldown ? "animate-bounce" : ""}`} />
-            {waiterCooldown ? "Garzón en camino ✓" : "Llamar Garzón"}
-          </button>
+      {/* ── Floating action bar (Waiter / Bill) — only when seated at a table ── */}
+      {!isGeneralMenu && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 bg-zinc-950/95 backdrop-blur-xl border-t border-zinc-800/50 px-4 py-3 safe-bottom">
+          <div className="max-w-lg mx-auto flex gap-3">
+            <button
+              onClick={handleCallWaiter}
+              disabled={waiterCooldown}
+              className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm transition-all cursor-pointer ${
+                waiterCooldown
+                  ? "bg-zinc-800 text-zinc-600"
+                  : "bg-amber-500 hover:bg-amber-400 text-zinc-900 active:scale-[0.97] shadow-lg shadow-amber-500/20"
+              }`}
+            >
+              <Bell className={`w-4 h-4 ${!waiterCooldown ? "animate-bounce" : ""}`} />
+              {waiterCooldown ? "Garzón en camino ✓" : "Llamar Garzón"}
+            </button>
 
-          <button
-            onClick={closedOrder ? () => setShowReceipt(true) : handleRequestBill}
-            disabled={billDisabled}
-            className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm transition-all cursor-pointer ${
-              closedOrder
-              ? "bg-emerald-600 text-white border border-emerald-500"
-              : billRequested || hasPendingBillRequest
-              ? "bg-emerald-900/50 text-emerald-400 border border-emerald-500/20"
+            <button
+              onClick={closedOrder ? () => setShowReceipt(true) : handleRequestBill}
+              disabled={billDisabled}
+              className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm transition-all cursor-pointer ${
+                closedOrder
+                ? "bg-emerald-600 text-white border border-emerald-500"
+                : billRequested || hasPendingBillRequest
+                ? "bg-emerald-900/50 text-emerald-400 border border-emerald-500/20"
+                  : !hasDeliveredOrder
+                  ? "bg-zinc-800/50 text-zinc-700 border border-zinc-800"
+                  : "bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700/50 active:scale-[0.97]"
+              }`}
+            >
+              <Receipt className="w-4 h-4" />
+              {closedOrder
+                ? "Ver boleta"
+                : billRequested || hasPendingBillRequest
+                ? "Cuenta solicitada ✓"
                 : !hasDeliveredOrder
-                ? "bg-zinc-800/50 text-zinc-700 border border-zinc-800"
-                : "bg-zinc-800 hover:bg-zinc-700 text-white border border-zinc-700/50 active:scale-[0.97]"
-            }`}
-          >
-            <Receipt className="w-4 h-4" />
-            {closedOrder
-              ? "Ver boleta"
-              : billRequested || hasPendingBillRequest
-              ? "Cuenta solicitada ✓"
-              : !hasDeliveredOrder
-              ? "Sin pedidos aún"
-              : "Pedir Cuenta"}
-          </button>
-        </div>
+                ? "Sin pedidos aún"
+                : "Pedir Cuenta"}
+            </button>
+          </div>
 
-        {/* Restaurant footer */}
-        <p className="text-center text-[9px] text-zinc-700 mt-2">
-          Restaurant Hacienda · Carta Digital · Mesa {tableNumber}
+          {/* Restaurant footer */}
+          <p className="text-center text-[9px] text-zinc-700 mt-2">
+            Restaurant Hacienda · Carta Digital · Mesa {tableNumber}
+          </p>
+        </div>
+      )}
+
+      {isGeneralMenu && (
+        <p className="text-center text-[9px] text-zinc-700 pb-6">
+          Restaurant Hacienda · Carta Digital
         </p>
-      </div>
+      )}
 
 
 

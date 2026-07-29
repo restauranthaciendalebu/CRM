@@ -25,6 +25,15 @@ function getQRTableNumber(): number | null {
   return null;
 }
 
+// The "general" QR (bar, entrance, outside the restaurant) links here with no
+// table number at all — it needs its own marker, or it's indistinguishable
+// from someone just opening the site to log in as staff.
+function getIsGeneralMenuQR(): boolean {
+  const search = window.location.search || (window.location.hash.includes("?") ? window.location.hash.split("?")[1] : "");
+  const params = new URLSearchParams(search);
+  return params.get("carta") === "1" || params.get("menu") === "1";
+}
+
 function LoadingScreen() {
   return (
     <div className="bg-zinc-950 min-h-screen text-white flex flex-col items-center justify-center p-6 text-center">
@@ -68,6 +77,7 @@ function AppContent() {
   const [clientTableId, setClientTableId] = useState("t5");
   const [activeUser, setActiveUser] = useState<User | null>(null);
   const [qrTableNumber] = useState<number | null>(() => getQRTableNumber());
+  const [isGeneralMenuQR] = useState<boolean>(() => getIsGeneralMenuQR());
   const [themeId, setThemeId] = useState<string>(() => {
     return localStorage.getItem("hacienda-app-theme-id") || "amber";
   });
@@ -142,7 +152,7 @@ function AppContent() {
     return <LoadingScreen />;
   }
 
-  if (qrTableNumber !== null) {
+  if (qrTableNumber !== null || isGeneralMenuQR) {
     return (
       <CustomerQRView
         state={state}

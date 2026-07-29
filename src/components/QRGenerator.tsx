@@ -23,9 +23,12 @@ export default function QRGenerator({ tables, restaurantName = "Restaurant Hacie
       setIsGenerating(true);
       const urls: Record<string, string> = {};
       
-      // Generate a general QR for the whole menu
+      // Generate a general QR for the whole menu (no table — for the bar or
+      // outside the restaurant). Needs its own marker in the URL: without it,
+      // this is indistinguishable from just visiting the site, which sends
+      // anyone without a staff session straight to the login screen.
       try {
-        urls["general"] = await QRCode.toDataURL(BASE_URL, {
+        urls["general"] = await QRCode.toDataURL(`${BASE_URL}?carta=1`, {
           width: 512,
           margin: 2,
           color: { dark: "#18181b", light: "#ffffff" },
@@ -65,7 +68,7 @@ export default function QRGenerator({ tables, restaurantName = "Restaurant Hacie
   };
 
   const copyUrl = (tableNumber?: number) => {
-    const url = tableNumber ? `${BASE_URL}?mesa=${tableNumber}` : BASE_URL;
+    const url = tableNumber ? `${BASE_URL}?mesa=${tableNumber}` : `${BASE_URL}?carta=1`;
     navigator.clipboard.writeText(url).then(() => {
       setCopiedId(tableNumber ? `t${tableNumber}` : "general");
       setTimeout(() => setCopiedId(null), 2000);
@@ -206,7 +209,7 @@ export default function QRGenerator({ tables, restaurantName = "Restaurant Hacie
               )}
             </button>
             <a
-              href={BASE_URL}
+              href={`${BASE_URL}?carta=1`}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1 bg-white hover:bg-zinc-50 text-zinc-700 font-bold py-1.5 px-3 rounded-lg text-[11px] transition-all cursor-pointer border border-zinc-200"
@@ -214,7 +217,7 @@ export default function QRGenerator({ tables, restaurantName = "Restaurant Hacie
               <ExternalLink className="w-3 h-3" /> Abrir
             </a>
           </div>
-          <p className="text-[9px] text-zinc-400 mt-2 font-mono break-all">{BASE_URL}</p>
+          <p className="text-[9px] text-zinc-400 mt-2 font-mono break-all">{BASE_URL}?carta=1</p>
         </div>
       </div>
 
@@ -283,7 +286,7 @@ export default function QRGenerator({ tables, restaurantName = "Restaurant Hacie
               {qrDataUrls["general"] && (
                 <img src={qrDataUrls["general"]} alt="QR Carta" />
               )}
-              <div className="qr-url">{BASE_URL}</div>
+              <div className="qr-url">{BASE_URL}?carta=1</div>
             </div>
 
             {/* Per-table QR */}
