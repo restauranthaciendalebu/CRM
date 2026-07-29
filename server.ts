@@ -30,6 +30,10 @@ dotenv.config();
 // Helper for ESM pathing
 const __dirname = path.dirname(new URL(import.meta.url).pathname);
 
+// Minimum gap required between two reservations on the same table, so a
+// table can't be double-booked for overlapping dining windows.
+const RESERVATION_CONFLICT_WINDOW_MS = 90 * 60 * 1000;
+
 async function startServer() {
   await LocalDb.init();
 
@@ -1152,18 +1156,34 @@ async function startServer() {
     }
 
     let savedRes: any = null;
+    let errorMsg = "";
     LocalDb.updateState(state => {
+      const targetTableId = tableId || (id ? state.reservations.find(res => res.id === id)?.tableId : undefined);
+      if (targetTableId) {
+        const conflict = state.reservations.find(res =>
+          res.id !== id &&
+          res.tableId === targetTableId &&
+          res.status !== ReservationStatus.CANCELLED &&
+          res.status !== ReservationStatus.ARRIVED &&
+          Math.abs(new Date(res.dateTime).getTime() - new Date(dateTime).getTime()) < RESERVATION_CONFLICT_WINDOW_MS
+        );
+        if (conflict) {
+          errorMsg = `Esa mesa ya tiene una reserva a horario cercano (${new Date(conflict.dateTime).toLocaleString("es-CL")}, a nombre de ${conflict.customerName}).`;
+          return;
+        }
+      }
+
       if (id) {
         const r = state.reservations.find(res => res.id === id);
         if (r) {
           r.customerName = customerName;
           r.customerPhone = customerPhone;
-          r.customerCount = Number(customerCount);
+          r.customerCount = Math.max(1, Number(customerCount) || 1);
           r.dateTime = dateTime;
           r.tableId = tableId || r.tableId;
           r.notes = notes;
           r.status = status || r.status;
-          if (advancePayment !== undefined) r.advancePayment = Number(advancePayment) || 0;
+          if (advancePayment !== undefined) r.advancePayment = Math.max(0, Math.round(Number(advancePayment) || 0));
           if (advancePaymentMethod !== undefined) r.advancePaymentMethod = advancePaymentMethod;
           if (items !== undefined) r.items = items;
           savedRes = r;
@@ -1199,12 +1219,12 @@ async function startServer() {
           id: newId,
           customerName,
           customerPhone,
-          customerCount: Number(customerCount),
+          customerCount: Math.max(1, Number(customerCount) || 1),
           dateTime,
           tableId: tableId || undefined,
           notes: notes || "",
           status: status || ReservationStatus.PENDING,
-          advancePayment: Number(advancePayment) || 0,
+          advancePayment: Math.max(0, Math.round(Number(advancePayment) || 0)),
           advancePaymentMethod: advancePaymentMethod || undefined,
           items: items || []
         };
@@ -1220,28 +1240,75 @@ async function startServer() {
       }
     });
 
+    if (errorMsg) {
+      return res.status(400).json({ error: errorMsg });
+    }
     res.json({ success: true, reservation: savedRes });
   });
 
   // Cancel / delete a reservation
   app.delete("/api/reservations/:id", (req, res) => {
     const { id } = req.params;
+    const depositAction = req.body?.depositAction as "REFUNDED" | "FORFEITED" | undefined;
     let found = false;
+    let errorMsg = "";
     LocalDb.updateState(state => {
+      if (!state.auditLogs) state.auditLogs = [];
       const idx = state.reservations.findIndex(r => r.id === id);
-      if (idx !== -1) {
-        const reservation = state.reservations[idx];
-        // Free the table if it was reserved
-        if (reservation.tableId) {
-          const table = state.tables.find(t => t.id === reservation.tableId);
-          if (table && table.status === TableStatus.RESERVED) {
-            table.status = TableStatus.FREE;
-          }
+      if (idx === -1) return;
+      const reservation = state.reservations[idx];
+      const hasDeposit = (reservation.advancePayment || 0) > 0;
+      if (hasDeposit && depositAction !== "REFUNDED" && depositAction !== "FORFEITED") {
+        errorMsg = "Indica si el abono fue devuelto o retenido para cancelar la reserva.";
+        return;
+      }
+
+      // Free the table if it was reserved
+      if (reservation.tableId) {
+        const table = state.tables.find(t => t.id === reservation.tableId);
+        if (table && table.status === TableStatus.RESERVED) {
+          table.status = TableStatus.FREE;
         }
-        reservation.status = ReservationStatus.CANCELLED;
-        found = true;
+      }
+      reservation.status = ReservationStatus.CANCELLED;
+      found = true;
+
+      if (hasDeposit && depositAction === "FORFEITED") {
+        state.payments.push({
+          id: "pay_" + Math.random().toString(36).substr(2, 9),
+          reservationId: reservation.id,
+          amount: reservation.advancePayment || 0,
+          method: reservation.advancePaymentMethod || PaymentMethod.CASH,
+          tip: 0,
+          discount: 0,
+          description: `Abono no reembolsado — reserva no ejecutada de ${reservation.customerName}`,
+          createdAt: new Date().toISOString(),
+        });
+        state.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substr(2, 9),
+          action: "Reserva Cancelada",
+          details: `Reserva de ${reservation.customerName} cancelada. El abono de $${(reservation.advancePayment || 0).toLocaleString("es-CL")} quedó como ingreso del restaurante.`,
+          createdAt: new Date().toISOString(),
+        });
+      } else if (hasDeposit && depositAction === "REFUNDED") {
+        state.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substr(2, 9),
+          action: "Reserva Cancelada",
+          details: `Reserva de ${reservation.customerName} cancelada. El abono de $${(reservation.advancePayment || 0).toLocaleString("es-CL")} fue devuelto al cliente.`,
+          createdAt: new Date().toISOString(),
+        });
+      } else {
+        state.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substr(2, 9),
+          action: "Reserva Cancelada",
+          details: `Reserva de ${reservation.customerName} cancelada.`,
+          createdAt: new Date().toISOString(),
+        });
       }
     });
+    if (errorMsg) {
+      return res.status(400).json({ error: errorMsg });
+    }
     if (!found) {
       return res.status(404).json({ error: "Reserva no encontrada" });
     }
@@ -1267,8 +1334,8 @@ async function startServer() {
   // 14. Shifts (Work sessions)
   app.post("/api/shifts/open", (req, res) => {
     const { userId, initialCash } = req.body;
-    if (!userId || initialCash === undefined) {
-      return res.status(400).json({ error: "Usuario y caja inicial requeridos" });
+    if (!userId || !Number.isFinite(Number(initialCash)) || Number(initialCash) < 0) {
+      return res.status(400).json({ error: "Usuario y caja inicial válida (número no negativo) son requeridos" });
     }
 
     let openedShift: any = null;
@@ -1277,9 +1344,11 @@ async function startServer() {
       const user = state.users.find(u => u.id === userId);
       const userName = user ? user.name : "Mozo";
 
-      // Close any previous open shifts
+      // Only auto-close a stale shift left open by this SAME user — never
+      // someone else's, or opening a shift would silently wipe out a
+      // coworker's real cash reconciliation with a fabricated final count.
       state.shifts.forEach(sh => {
-        if (sh.status === ShiftStatus.OPEN) {
+        if (sh.status === ShiftStatus.OPEN && sh.userId === userId) {
           sh.status = ShiftStatus.CLOSED;
           sh.closedAt = new Date().toISOString();
           sh.finalCash = sh.finalCash || sh.initialCash;
@@ -1310,8 +1379,8 @@ async function startServer() {
 
   app.post("/api/shifts/close", (req, res) => {
     const { id, finalCash } = req.body;
-    if (!id || finalCash === undefined) {
-      return res.status(400).json({ error: "ID de turno y arqueo final requeridos" });
+    if (!id || !Number.isFinite(Number(finalCash)) || Number(finalCash) < 0) {
+      return res.status(400).json({ error: "ID de turno y arqueo final válido (número no negativo) son requeridos" });
     }
 
     let closedShift: any = null;
@@ -1392,10 +1461,10 @@ async function startServer() {
         if (order.customerPhone) {
           const customer = state.customers.find(c => c.phone === order.customerPhone);
           if (customer) {
-            const earnedPoints = Math.floor((order.items.reduce((sum, it) => {
-              const p = state.products.find(prod => prod.id === it.productId);
-              return sum + (p ? p.price : 0) * it.quantity;
-            }, 0)) / 100);
+            // Reverse the exact points earned at closing time (stored on the
+            // order), not a recomputation from today's catalog prices — those
+            // may have changed since the sale and would over/under-claw points.
+            const earnedPoints = Math.floor(((order.billingSubtotal || 0) - (order.billingDiscount || 0)) / 100);
             if (earnedPoints > 0) {
               customer.points = Math.max(0, customer.points - earnedPoints);
               state.loyaltyTxs.push({
@@ -1441,7 +1510,7 @@ async function startServer() {
         table.status = TableStatus.FREE;
       }
 
-      (order as any).voided = true;
+      order.voided = true;
       order.status = OrderStatus.CLOSED;
 
       state.auditLogs.push({

@@ -166,6 +166,7 @@ export default function MozoView({
   const [showResItemPicker, setShowResItemPicker] = useState(false);
   const [resItemSearch, setResItemSearch] = useState("");
   const [resItemCategory, setResItemCategory] = useState("all");
+  const [cancellingReservation, setCancellingReservation] = useState<Reservation | null>(null);
 
 
 
@@ -460,7 +461,8 @@ export default function MozoView({
           }
         }
       } else {
-        showBanner("Error al guardar la reserva.", "error");
+        const err = await res.json().catch(() => ({}));
+        showBanner(err.error || "Error al guardar la reserva.", "error");
         if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
       }
     } catch (e) {
@@ -471,7 +473,7 @@ export default function MozoView({
     }
   };
 
-  const handleCancelReservation = async (reservationId: string) => {
+  const handleCancelReservation = async (reservationId: string, depositAction?: "REFUNDED" | "FORFEITED") => {
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
       await applyDirectStateUpdate((nextState) => {
         const r = nextState.reservations.find(res => res.id === reservationId);
@@ -481,11 +483,27 @@ export default function MozoView({
             if (table && table.status === TableStatus.RESERVED) table.status = TableStatus.FREE;
           }
           r.status = ReservationStatus.CANCELLED;
+          if (depositAction === "FORFEITED" && (r.advancePayment || 0) > 0) {
+            nextState.payments.push({
+              id: "pay_" + Math.random().toString(36).substring(2, 11),
+              reservationId: r.id,
+              amount: r.advancePayment || 0,
+              method: r.advancePaymentMethod || PaymentMethod.CASH,
+              tip: 0,
+              discount: 0,
+              description: `Abono no reembolsado — reserva no ejecutada de ${r.customerName}`,
+              createdAt: new Date().toISOString(),
+            });
+          }
         }
       });
     }
     try {
-      const res = await fetch(`/api/reservations/${reservationId}`, { method: "DELETE" });
+      const res = await fetch(`/api/reservations/${reservationId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ depositAction }),
+      });
       if (res.ok) {
         showBanner("Reserva cancelada.");
         refreshStateIfNeeded();
@@ -497,7 +515,8 @@ export default function MozoView({
           }
         }
       } else {
-        showBanner("Error al cancelar reserva.", "error");
+        const err = await res.json().catch(() => ({}));
+        showBanner(err.error || "Error al cancelar reserva.", "error");
         if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") await refreshDirectState();
       }
     } catch (e) {
@@ -764,6 +783,7 @@ export default function MozoView({
   // Kitchen direct submit (sends pending to kitchen and triggers ingredient deduction)
   const handleSendToKitchen = async () => {
     if (!activeOrder || !hasPendingKitchenItems || isSendingKitchen) return;
+    const orderId = activeOrder.id;
     setIsSendingKitchen(true);
     const sentAt = new Date().toISOString();
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
@@ -796,16 +816,13 @@ export default function MozoView({
         order.updatedAt = sentAt;
       });
     }
-    try {
-      const res = await fetch(`/api/orders/${activeOrder.id}/send-to-kitchen`, {
-        method: "POST"
-      });
-      showBanner("Comanda enviada a Cocina.");
-    } catch (e) {
-      showBanner("Comanda enviada a Cocina.");
-    } finally {
-      setIsSendingKitchen(false);
-    }
+    // UI already reflects the change instantly above — don't make the waiter
+    // wait on the network round-trip before they can move to the next step.
+    setIsSendingKitchen(false);
+    showBanner("Comanda enviada a Cocina.");
+    void fetch(`/api/orders/${orderId}/send-to-kitchen`, { method: "POST" }).catch((e) => {
+      console.error("No se pudo confirmar el envío a cocina", e);
+    });
   };
 
   // Change individual order item status
@@ -816,16 +833,20 @@ export default function MozoView({
       ? OrderItemStatus.READY
       : OrderItemStatus.DELIVERED;
 
+    const orderId = activeOrder.id;
     setPendingOrderActionIds(prev => [...prev, itemId]);
     if (import.meta.env.VITE_USE_FIRESTORE_DIRECT_API === "true") {
       await applyDirectStateUpdate((nextState) => {
-        const order = nextState.orders.find((candidate) => candidate.id === activeOrder.id);
+        const order = nextState.orders.find((candidate) => candidate.id === orderId);
         const item = order?.items.find((candidate) => candidate.id === itemId);
         if (item) item.status = nextStatus;
       });
     }
+    // Release the button as soon as the optimistic paint above is visible —
+    // the network confirmation below no longer needs to hold up the UI.
+    setPendingOrderActionIds(prev => prev.filter(id => id !== itemId));
     try {
-      const res = await fetch(`/api/orders/${activeOrder.id}/items/${itemId}/status`, {
+      const res = await fetch(`/api/orders/${orderId}/items/${itemId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: nextStatus })
@@ -841,8 +862,6 @@ export default function MozoView({
         await refreshDirectState();
       }
       showBanner("Error al cambiar estado.", "error");
-    } finally {
-      setPendingOrderActionIds(prev => prev.filter(id => id !== itemId));
     }
   };
 
@@ -1581,7 +1600,13 @@ export default function MozoView({
                           <Pencil className="w-3.5 h-3.5" /> Editar
                         </button>
                         <button
-                          onClick={() => handleCancelReservation(activeReservation.id)}
+                          onClick={() => {
+                            if ((activeReservation.advancePayment || 0) > 0) {
+                              setCancellingReservation(activeReservation);
+                            } else {
+                              handleCancelReservation(activeReservation.id);
+                            }
+                          }}
                           className="flex-1 bg-red-50 hover:bg-red-100 text-red-700 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer flex items-center justify-center gap-1"
                         >
                           <Trash2 className="w-3.5 h-3.5" /> Cancelar Reserva
@@ -1738,8 +1763,9 @@ export default function MozoView({
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-bold">$</span>
                             <input
                               type="number"
+                              min="0"
                               value={resAdvance || ""}
-                              onChange={e => setResAdvance(Number(e.target.value) || 0)}
+                              onChange={e => setResAdvance(Math.max(0, Number(e.target.value) || 0))}
                               placeholder="0"
                               className="w-full bg-white border border-zinc-200 rounded-lg pl-7 pr-3 py-2 text-xs font-semibold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400"
                             />
@@ -2242,14 +2268,11 @@ export default function MozoView({
                               <div className="flex items-center gap-1.5 bg-zinc-100 p-1 rounded-md border border-zinc-200">
                                 <button
                                   onClick={() => setWaiterCart(prev => {
-                                    const c = [...prev];
-                                    const idx = c.findIndex(it => it.product.id === p.id);
-                                    if (c[idx].quantity > 1) {
-                                      c[idx].quantity--;
-                                    } else {
-                                      c.splice(idx, 1);
+                                    const idx = prev.findIndex(it => it.product.id === p.id);
+                                    if (prev[idx].quantity > 1) {
+                                      return prev.map((it, i) => i === idx ? { ...it, quantity: it.quantity - 1 } : it);
                                     }
-                                    return c;
+                                    return prev.filter((_, i) => i !== idx);
                                   })}
                                   className="bg-white px-1.5 py-0.5 rounded font-bold text-zinc-600"
                                 >
@@ -2257,12 +2280,9 @@ export default function MozoView({
                                 </button>
                                 <span className="font-extrabold text-zinc-900 text-xs px-1">{inCartQty}</span>
                                 <button
-                                  onClick={() => setWaiterCart(prev => {
-                                    const c = [...prev];
-                                    const idx = c.findIndex(it => it.product.id === p.id);
-                                    c[idx].quantity++;
-                                    return c;
-                                  })}
+                                  onClick={() => setWaiterCart(prev => prev.map(it =>
+                                    it.product.id === p.id ? { ...it, quantity: it.quantity + 1 } : it
+                                  ))}
                                   className="bg-white px-1.5 py-0.5 rounded font-bold text-zinc-600"
                                 >
                                   +
@@ -2316,11 +2336,10 @@ export default function MozoView({
                               type="text"
                               placeholder="Notas..."
                               value={item.notes}
-                              onChange={(e) => setWaiterCart(prev => {
-                                const c = [...prev];
-                                c[index].notes = e.target.value;
-                                return c;
-                              })}
+                              onChange={(e) => {
+                                const value = e.target.value;
+                                setWaiterCart(prev => prev.map((it, i) => i === index ? { ...it, notes: value } : it));
+                              }}
                               className="w-full bg-white border border-zinc-200 text-[10px] text-zinc-800 p-1 rounded mt-1 focus:outline-none"
                             />
                             </div>
@@ -2861,6 +2880,50 @@ export default function MozoView({
       </AnimatePresence>
 
 
+
+      {/* MODAL: RESERVATION CANCEL — DEPOSIT DECISION */}
+      {cancellingReservation && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-zinc-200 p-5">
+            <h3 className="font-bold text-zinc-900 text-sm mb-1">Cancelar reserva de {cancellingReservation.customerName}</h3>
+            <p className="text-xs text-zinc-500 mb-4">
+              Esta reserva tiene un abono de{" "}
+              <span className="font-bold text-zinc-800">
+                ${(cancellingReservation.advancePayment || 0).toLocaleString("es-CL")}
+              </span>
+              . ¿Qué pasó con ese dinero?
+            </p>
+            <div className="space-y-2">
+              <button
+                onClick={async () => {
+                  const id = cancellingReservation.id;
+                  setCancellingReservation(null);
+                  await handleCancelReservation(id, "REFUNDED");
+                }}
+                className="w-full bg-zinc-100 hover:bg-zinc-200 text-zinc-800 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Se devolvió al cliente
+              </button>
+              <button
+                onClick={async () => {
+                  const id = cancellingReservation.id;
+                  setCancellingReservation(null);
+                  await handleCancelReservation(id, "FORFEITED");
+                }}
+                className="w-full bg-red-50 hover:bg-red-100 text-red-700 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer"
+              >
+                Se lo quedó el restaurante (ingreso)
+              </button>
+              <button
+                onClick={() => setCancellingReservation(null)}
+                className="w-full text-zinc-500 hover:text-zinc-700 font-bold py-2 text-xs transition-colors cursor-pointer"
+              >
+                Volver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isAddTableOpen && (
         <AddTableModal

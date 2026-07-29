@@ -147,6 +147,7 @@ export interface Order {
   billingDiscount?: number;
   billingTip?: number;
   billingTotal?: number;
+  voided?: boolean;
   items: OrderItem[];
   customerPhone?: string; // linked customer if registered/found
   customerUid?: string; // anonymous Firebase session used by QR orders
@@ -190,7 +191,9 @@ export interface Promotion {
 
 export interface Payment {
   id: string;
-  orderId: string;
+  orderId?: string; // absent for payments not tied to an order (e.g. a forfeited reservation deposit)
+  reservationId?: string;
+  description?: string;
   amount: number;
   method: PaymentMethod;
   tip: number;

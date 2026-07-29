@@ -37,7 +37,7 @@ export default function WaiterReceiptHistory({ state, onClose }: WaiterReceiptHi
         payment,
         order: state.orders.find((order) => order.id === payment.orderId),
       }))
-      .filter((entry) => entry.order && !(entry.order as typeof entry.order & { voided?: boolean }).voided)
+      .filter((entry) => entry.order && !entry.order.voided)
       .filter((entry) => new Date(entry.payment.createdAt).getTime() >= periodStart)
       .filter((entry) => {
         if (!normalizedSearch) return true;

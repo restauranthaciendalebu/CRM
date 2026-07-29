@@ -241,6 +241,9 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
           : order.status;
       });
     }
+    // Release the button as soon as the optimistic paint above is visible —
+    // the network confirmation below no longer needs to hold up the UI.
+    setPendingItemIds(prev => prev.filter(id => id !== itemId));
     try {
       const res = await fetch(`/api/orders/${orderId}/items/${itemId}/status`, {
         method: "POST",
@@ -258,8 +261,6 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
         await refreshDirectState();
       }
       console.error(e);
-    } finally {
-      setPendingItemIds(prev => prev.filter(id => id !== itemId));
     }
   };
 

@@ -1353,13 +1353,10 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                             <button
                               onClick={() => {
                                 setCart(prev => {
-                                  const c = [...prev];
-                                  if (c[index].quantity > 1) {
-                                    c[index].quantity--;
-                                  } else {
-                                    c.splice(index, 1);
+                                  if (prev[index].quantity > 1) {
+                                    return prev.map((it, i) => i === index ? { ...it, quantity: it.quantity - 1 } : it);
                                   }
-                                  return c;
+                                  return prev.filter((_, i) => i !== index);
                                 });
                               }}
                               className="bg-white hover:bg-zinc-200 text-zinc-600 border border-zinc-200 p-0.5 rounded cursor-pointer"
@@ -1369,11 +1366,7 @@ export default function ClienteView({ state, activeTableId, onRefreshState }: Cl
                             <span className="font-extrabold text-zinc-900">{item.quantity}</span>
                             <button
                               onClick={() => {
-                                setCart(prev => {
-                                  const c = [...prev];
-                                  c[index].quantity++;
-                                  return c;
-                                });
+                                setCart(prev => prev.map((it, i) => i === index ? { ...it, quantity: it.quantity + 1 } : it));
                               }}
                               className="bg-white hover:bg-zinc-200 text-zinc-600 border border-zinc-200 p-0.5 rounded cursor-pointer"
                             >

@@ -442,7 +442,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const currentPayments = completedPayments.filter(p => isDateInPeriod(p.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
   const currentPaidPayments = currentPayments.filter(p => p.method !== PaymentMethod.ACCOUNT);
   const currentOrders = allOrders.filter(o => isDateInPeriod(o.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
-  const currentClosedOrders = currentOrders.filter(o => o.status === "CLOSED");
+  const currentClosedOrders = currentOrders.filter(o => o.status === "CLOSED" && !o.voided);
 
   const totalSalesVolume = currentPaidPayments.reduce((sum, p) => sum + p.amount, 0);
   const totalTipVolume = currentPaidPayments.reduce((sum, p) => sum + p.tip, 0);
@@ -454,7 +454,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const prevPayments = completedPayments.filter(p => isDateInPreviousPeriod(p.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
   const prevPaidPayments = prevPayments.filter(p => p.method !== PaymentMethod.ACCOUNT);
   const prevOrders = allOrders.filter(o => isDateInPreviousPeriod(o.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
-  const prevClosedOrders = prevOrders.filter(o => o.status === "CLOSED");
+  const prevClosedOrders = prevOrders.filter(o => o.status === "CLOSED" && !o.voided);
 
   const prevSalesVolume = prevPaidPayments.reduce((sum, p) => sum + p.amount, 0);
   const prevTipVolume = prevPaidPayments.reduce((sum, p) => sum + p.tip, 0);
@@ -1585,12 +1585,12 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
               </div>
 
               <div className="space-y-3">
-                {state.orders.filter(o => (o.status === "CLOSED" || (o as any).voided) && isDateInPeriod(o.updatedAt, boletasPeriod, boletasStartDate, boletasEndDate)).length > 0 ? (
+                {state.orders.filter(o => (o.status === "CLOSED" || o.voided) && isDateInPeriod(o.updatedAt, boletasPeriod, boletasStartDate, boletasEndDate)).length > 0 ? (
                   [...state.orders]
-                    .filter(o => (o.status === "CLOSED" || (o as any).voided) && isDateInPeriod(o.updatedAt, boletasPeriod, boletasStartDate, boletasEndDate))
+                    .filter(o => (o.status === "CLOSED" || o.voided) && isDateInPeriod(o.updatedAt, boletasPeriod, boletasStartDate, boletasEndDate))
                     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
                     .map((order) => {
-                      const isVoided = (order as any).voided;
+                      const isVoided = order.voided;
                       const orderPayments = state.payments
                         .filter(p => p.orderId === order.id)
                         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());

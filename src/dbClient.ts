@@ -44,6 +44,10 @@ import { getRemainingBalance } from "./billingUtils";
 import { parseAndValidateBackup } from "./backupUtils";
 import { shouldArchiveEntityChange } from "./recoveryUtils";
 
+// Minimum gap required between two reservations on the same table, so a
+// table can't be double-booked for overlapping dining windows.
+const RESERVATION_CONFLICT_WINDOW_MS = 90 * 60 * 1000;
+
 // Cache local of the database state
 let currentCachedState: RestaurantState | null = null;
 let currentClientState: RestaurantState | null = null;
@@ -214,10 +218,27 @@ async function startFirestoreSubscriptions() {
   if (isStaff) readableFields.forEach((field) => required.add(field));
   if (currentUser?.isAnonymous) required.add("orders");
   const loaded = new Set<string>();
+  let initialLoadDone = false;
 
+  // During initial load, wait for every required collection before publishing
+  // so we never show partial/empty data. After that, each snapshot merges only
+  // the field that actually changed into the current authoritative state —
+  // republishing the whole shared `next` object instead would clobber a
+  // fresher field (e.g. an order just advanced optimistically) with whatever
+  // stale value `next` still holds for it, because that field's own listener
+  // hasn't fired yet. That clobber-then-catch-up is what shows up as a status
+  // visibly reverting for a moment before jumping forward again.
   const commit = (name: string) => {
     loaded.add(name);
+    if (initialLoadDone) {
+      const merged = cloneState(currentCachedState || next);
+      (merged as any)[name] = (next as any)[name];
+      currentCachedState = merged;
+      publishState(merged);
+      return;
+    }
     if ([...required].every((entry) => loaded.has(entry))) {
+      initialLoadDone = true;
       currentCachedState = next;
       publishState(next);
     }
@@ -974,6 +995,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     if (sendToKitchenMatch && method === "POST") {
       const id = sendToKitchenMatch[1];
       let errorMsg = "";
+      const sentItemIds = new Set<string>();
 
       const updated = await updateState(s => {
         const order = s.orders.find(o => o.id === id);
@@ -983,7 +1005,6 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         }
 
         let updatedCount = 0;
-        const sentItemIds = new Set<string>();
         order.items.forEach(item => {
           if (item.status === OrderItemStatus.PENDING || item.status === OrderItemStatus.SENT_TO_KITCHEN || item.status === OrderItemStatus.RECEIVED) {
             // Check if product requires kitchen preparation
@@ -1001,11 +1022,6 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
         if (updatedCount > 0) {
           const now = new Date().toISOString();
-          deductStockForOrder({
-            ...order,
-            items: order.items.filter(it => sentItemIds.has(it.id))
-          }, s);
-
           const hasKitchenQueueItems = order.items.some(item =>
             item.status === OrderItemStatus.SENT_TO_KITCHEN || item.status === OrderItemStatus.RECEIVED
           );
@@ -1030,6 +1046,20 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       if (errorMsg) {
         return createResponse({ error: errorMsg }, 400);
       }
+
+      // Stock deduction runs as its own transaction so contention on a shared
+      // ingredient document never slows down or fails the order status change.
+      if (sentItemIds.size > 0) {
+        void updateState(s2 => {
+          const order2 = s2.orders.find(o => o.id === id);
+          if (!order2) return;
+          deductStockForOrder({
+            ...order2,
+            items: order2.items.filter(it => sentItemIds.has(it.id)),
+          }, s2);
+        }).catch(err => console.error("No se pudo descontar el stock del pedido", err));
+      }
+
       return createResponse({ success: true, order: updated.orders.find(o => o.id === id) });
     }
 
@@ -1038,6 +1068,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     if (orderApproveMatch && method === "POST") {
       const id = orderApproveMatch[1];
       const { waiterId } = body;
+      const kitchenItemIds = new Set<string>();
 
       const updated = await updateState(s => {
         const order = s.orders.find(o => o.id === id);
@@ -1045,7 +1076,6 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           const now = new Date().toISOString();
           order.waiterId = waiterId;
           order.updatedAt = now;
-          const kitchenItemIds = new Set<string>();
           order.items.forEach(it => {
             if (it.status === OrderItemStatus.PENDING) {
               const product = s.products.find(p => p.id === it.productId);
@@ -1073,13 +1103,22 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             ? OrderStatus.PENDING_KITCHEN
             : order.status;
           if (kitchenItemIds.size > 0) order.kitchenSentAt = now;
-
-          deductStockForOrder({
-            ...order,
-            items: order.items.filter(item => kitchenItemIds.has(item.id)),
-          }, s);
         }
       });
+
+      // Stock deduction runs as its own transaction so contention on a shared
+      // ingredient document never slows down or fails the order approval.
+      if (kitchenItemIds.size > 0) {
+        void updateState(s2 => {
+          const order2 = s2.orders.find(o => o.id === id);
+          if (!order2) return;
+          deductStockForOrder({
+            ...order2,
+            items: order2.items.filter(item => kitchenItemIds.has(item.id)),
+          }, s2);
+        }).catch(err => console.error("No se pudo descontar el stock del pedido", err));
+      }
+
       return createResponse({ success: true, order: updated.orders.find(o => o.id === id) });
     }
 
@@ -1207,6 +1246,9 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       }> = [];
       let remainingBalance = 0;
       let orderClosed = false;
+      let loyaltyPhoneToCredit: string | undefined;
+      let loyaltyPointsToCredit = 0;
+      let loyaltyTableNumber: number | undefined;
 
       const updated = await updateState(s => {
         const order = s.orders.find(o => o.id === id);
@@ -1303,6 +1345,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         if (orderClosed) {
           order.status = OrderStatus.CLOSED;
           if (table) table.status = TableStatus.FREE;
+          loyaltyTableNumber = table?.number;
 
           const loyaltyPhone = accountCustomer?.phone || customerPhone || order.customerPhone;
           if (loyaltyPhone) {
@@ -1310,15 +1353,8 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             if (customer) {
               const earnedPoints = Math.floor(((order.billingSubtotal || proposedSubtotal) - (order.billingDiscount || 0)) / 100);
               if (earnedPoints > 0) {
-                customer.points += earnedPoints;
-                s.loyaltyTxs.push({
-                  id: "tx_" + Math.random().toString(36).substring(2, 11),
-                  customerId: customer.id,
-                  points: earnedPoints,
-                  type: LoyaltyTxType.EARNED,
-                  description: `Puntos ganados por consumo de Mesa ${table ? table.number : ""}`,
-                  createdAt: paymentCreatedAt
-                });
+                loyaltyPhoneToCredit = loyaltyPhone;
+                loyaltyPointsToCredit = earnedPoints;
               }
             }
           }
@@ -1328,6 +1364,28 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       if (errorMsg) {
         return createResponse({ error: errorMsg }, 400);
       }
+
+      // Loyalty crediting runs as its own transaction, separate from the
+      // customer/tables/orders/payments write above, so it can never slow
+      // down or block the payment confirmation the waiter is waiting on.
+      if (loyaltyPhoneToCredit && loyaltyPointsToCredit > 0) {
+        const phone = loyaltyPhoneToCredit;
+        const points = loyaltyPointsToCredit;
+        void updateState(s2 => {
+          const customer = s2.customers.find(c => c.phone === phone);
+          if (!customer) return;
+          customer.points += points;
+          s2.loyaltyTxs.push({
+            id: "tx_" + Math.random().toString(36).substring(2, 11),
+            customerId: customer.id,
+            points,
+            type: LoyaltyTxType.EARNED,
+            description: `Puntos ganados por consumo de Mesa ${loyaltyTableNumber ?? ""}`,
+            createdAt: new Date().toISOString(),
+          });
+        }).catch(err => console.error("No se pudieron acreditar los puntos de fidelidad", err));
+      }
+
       return createResponse({
         success: true,
         state: updated,
@@ -1408,6 +1466,10 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     if (customerRedeemMatch && method === "POST") {
       const id = customerRedeemMatch[1];
       const { points, description } = body;
+
+      if (!Number.isFinite(points) || !Number.isInteger(points) || points <= 0) {
+        return createResponse({ error: "La cantidad de puntos a canjear debe ser un entero positivo." }, 400);
+      }
 
       let errorMsg = "";
       const updated = await updateState(s => {
@@ -1756,20 +1818,39 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     // 13. Reservations Management
     if (path === "/api/reservations" && method === "POST") {
       const { id, customerName, customerPhone, customerCount, dateTime, tableId, notes, status, advancePayment, advancePaymentMethod, items } = body;
+      if (!customerName || !dateTime) {
+        return createResponse({ error: "Nombre y fecha/hora requeridos" }, 400);
+      }
       let savedRes: any = null;
+      let errorMsg = "";
 
       await updateState(s => {
+        const targetTableId = tableId || (id ? s.reservations.find(res => res.id === id)?.tableId : undefined);
+        if (targetTableId) {
+          const conflict = s.reservations.find(res =>
+            res.id !== id &&
+            res.tableId === targetTableId &&
+            res.status !== ReservationStatus.CANCELLED &&
+            res.status !== ReservationStatus.ARRIVED &&
+            Math.abs(new Date(res.dateTime).getTime() - new Date(dateTime).getTime()) < RESERVATION_CONFLICT_WINDOW_MS
+          );
+          if (conflict) {
+            errorMsg = `Esa mesa ya tiene una reserva a horario cercano (${new Date(conflict.dateTime).toLocaleString("es-CL")}, a nombre de ${conflict.customerName}).`;
+            return;
+          }
+        }
+
         if (id) {
           const r = s.reservations.find(res => res.id === id);
           if (r) {
             r.customerName = customerName;
             r.customerPhone = customerPhone || "";
-            r.customerCount = Number(customerCount) || 1;
+            r.customerCount = Math.max(1, Number(customerCount) || 1);
             r.dateTime = dateTime;
             r.tableId = tableId || r.tableId;
             r.notes = notes || "";
             r.status = status || r.status;
-            if (advancePayment !== undefined) r.advancePayment = Number(advancePayment) || 0;
+            if (advancePayment !== undefined) r.advancePayment = Math.max(0, Math.round(Number(advancePayment) || 0));
             if (advancePaymentMethod !== undefined) r.advancePaymentMethod = advancePaymentMethod;
             if (items !== undefined) r.items = items;
             savedRes = r;
@@ -1802,12 +1883,12 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             id: newId,
             customerName,
             customerPhone: customerPhone || "",
-            customerCount: Number(customerCount) || 1,
+            customerCount: Math.max(1, Number(customerCount) || 1),
             dateTime,
             tableId: tableId || undefined,
             notes: notes || "",
             status: status || ReservationStatus.PENDING,
-            advancePayment: Number(advancePayment) || 0,
+            advancePayment: Math.max(0, Math.round(Number(advancePayment) || 0)),
             advancePaymentMethod: advancePaymentMethod || undefined,
             items: items || []
           };
@@ -1823,29 +1904,77 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         }
       });
 
+      if (errorMsg) {
+        return createResponse({ error: errorMsg }, 400);
+      }
       return createResponse({ success: true, reservation: savedRes });
     }
 
     // Cancel / delete a reservation
     if (path.match(/^\/api\/reservations\/[^/]+$/) && method === "DELETE") {
       const resId = path.split("/").pop()!;
+      const depositAction = body.depositAction as "REFUNDED" | "FORFEITED" | undefined;
       let found = false;
+      let errorMsg = "";
 
       await updateState(s => {
         const idx = s.reservations.findIndex(r => r.id === resId);
-        if (idx !== -1) {
-          const reservation = s.reservations[idx];
-          if (reservation.tableId) {
-            const table = s.tables.find(t => t.id === reservation.tableId);
-            if (table && table.status === TableStatus.RESERVED) {
-              table.status = TableStatus.FREE;
-            }
+        if (idx === -1) return;
+        const reservation = s.reservations[idx];
+        const hasDeposit = (reservation.advancePayment || 0) > 0;
+        if (hasDeposit && depositAction !== "REFUNDED" && depositAction !== "FORFEITED") {
+          errorMsg = "Indica si el abono fue devuelto o retenido para cancelar la reserva.";
+          return;
+        }
+
+        if (reservation.tableId) {
+          const table = s.tables.find(t => t.id === reservation.tableId);
+          if (table && table.status === TableStatus.RESERVED) {
+            table.status = TableStatus.FREE;
           }
-          reservation.status = ReservationStatus.CANCELLED;
-          found = true;
+        }
+        reservation.status = ReservationStatus.CANCELLED;
+        found = true;
+
+        if (!s.auditLogs) s.auditLogs = [];
+        if (hasDeposit && depositAction === "FORFEITED") {
+          if (!s.payments) s.payments = [];
+          s.payments.push({
+            id: "pay_" + Math.random().toString(36).substring(2, 11),
+            reservationId: reservation.id,
+            amount: reservation.advancePayment || 0,
+            method: reservation.advancePaymentMethod || PaymentMethod.CASH,
+            tip: 0,
+            discount: 0,
+            description: `Abono no reembolsado — reserva no ejecutada de ${reservation.customerName}`,
+            createdAt: new Date().toISOString(),
+          });
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Reserva Cancelada",
+            details: `Reserva de ${reservation.customerName} cancelada. El abono de $${(reservation.advancePayment || 0).toLocaleString("es-CL")} quedó como ingreso del restaurante.`,
+            createdAt: new Date().toISOString(),
+          });
+        } else if (hasDeposit && depositAction === "REFUNDED") {
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Reserva Cancelada",
+            details: `Reserva de ${reservation.customerName} cancelada. El abono de $${(reservation.advancePayment || 0).toLocaleString("es-CL")} fue devuelto al cliente.`,
+            createdAt: new Date().toISOString(),
+          });
+        } else {
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Reserva Cancelada",
+            details: `Reserva de ${reservation.customerName} cancelada.`,
+            createdAt: new Date().toISOString(),
+          });
         }
       });
 
+      if (errorMsg) {
+        return createResponse({ error: errorMsg }, 400);
+      }
       if (!found) {
         return createResponse({ error: "Reserva no encontrada" }, 404);
       }
@@ -1870,14 +1999,20 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     // 14. Shifts
     if (path === "/api/shifts/open" && method === "POST") {
       const { userId, initialCash } = body;
+      if (!userId || !Number.isFinite(Number(initialCash)) || Number(initialCash) < 0) {
+        return createResponse({ error: "Usuario y caja inicial válida (número no negativo) son requeridos" }, 400);
+      }
       let openedShift: any = null;
 
       await updateState(s => {
         const user = s.users.find(u => u.id === userId);
         const userName = user ? user.name : "Mozo";
 
+        // Only auto-close a stale shift left open by this SAME user — never
+        // someone else's, or opening a shift would silently wipe out a
+        // coworker's real cash reconciliation with a fabricated final count.
         s.shifts.forEach(sh => {
-          if (sh.status === ShiftStatus.OPEN) {
+          if (sh.status === ShiftStatus.OPEN && sh.userId === userId) {
             sh.status = ShiftStatus.CLOSED;
             sh.closedAt = new Date().toISOString();
             sh.finalCash = sh.finalCash || sh.initialCash;
@@ -1908,6 +2043,9 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
     if (path === "/api/shifts/close" && method === "POST") {
       const { id, finalCash } = body;
+      if (!id || !Number.isFinite(Number(finalCash)) || Number(finalCash) < 0) {
+        return createResponse({ error: "ID de turno y arqueo final válido (número no negativo) son requeridos" }, 400);
+      }
       let closedShift: any = null;
 
       await updateState(s => {
@@ -2027,10 +2165,10 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           if (order.customerPhone) {
             const customer = s.customers.find(c => c.phone === order.customerPhone);
             if (customer) {
-              const earnedPoints = Math.floor((order.items.reduce((sum, it) => {
-                const p = s.products.find(prod => prod.id === it.productId);
-                return sum + (p ? p.price : 0) * it.quantity;
-              }, 0)) / 100);
+              // Reverse the exact points earned at closing time (stored on the
+              // order), not a recomputation from today's catalog prices — those
+              // may have changed since the sale and would over/under-claw points.
+              const earnedPoints = Math.floor(((order.billingSubtotal || 0) - (order.billingDiscount || 0)) / 100);
               if (earnedPoints > 0) {
                 customer.points = Math.max(0, customer.points - earnedPoints);
                 s.loyaltyTxs.push({
@@ -2076,7 +2214,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           table.status = TableStatus.FREE;
         }
 
-        (order as any).voided = true;
+        order.voided = true;
         order.status = OrderStatus.CLOSED;
 
         s.auditLogs.push({

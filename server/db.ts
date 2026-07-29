@@ -290,7 +290,14 @@ export class LocalDb {
       }
 
       this.remoteDoc = getFirestore().doc(FIRESTORE_STATE_DOC_PATH);
-      const snap = await this.remoteDoc.get();
+      // Never let a slow/unreachable Firestore connection block server startup
+      // indefinitely — fall back to the local JSON DB if it doesn't answer in time.
+      const snap = await Promise.race([
+        this.remoteDoc.get(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("Firestore init timed out after 8s")), 8000)
+        ),
+      ]);
       if (snap.exists) {
         this.stateCache = this.normalizeState(snap.data() as RestaurantState);
       } else {
