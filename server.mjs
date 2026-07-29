@@ -334,7 +334,12 @@ var LocalDb = class {
         }
       }
       this.remoteDoc = getFirestore().doc(FIRESTORE_STATE_DOC_PATH);
-      const snap = await this.remoteDoc.get();
+      const snap = await Promise.race([
+        this.remoteDoc.get(),
+        new Promise(
+          (_, reject) => setTimeout(() => reject(new Error("Firestore init timed out after 8s")), 8e3)
+        )
+      ]);
       if (snap.exists) {
         this.stateCache = this.normalizeState(snap.data());
       } else {
@@ -574,6 +579,7 @@ function getRemainingBalance(accountTotal, paidAmount) {
 dotenv.config({ path: ".env.local" });
 dotenv.config();
 var __dirname = path2.dirname(new URL(import.meta.url).pathname);
+var RESERVATION_CONFLICT_WINDOW_MS = 90 * 60 * 1e3;
 async function startServer() {
   await LocalDb.init();
   const app = express();
@@ -1532,18 +1538,29 @@ async function startServer() {
       return res.status(400).json({ error: "Nombre y fecha/hora requeridos" });
     }
     let savedRes = null;
+    let errorMsg = "";
     LocalDb.updateState((state) => {
+      const targetTableId = tableId || (id ? state.reservations.find((res2) => res2.id === id)?.tableId : void 0);
+      if (targetTableId) {
+        const conflict = state.reservations.find(
+          (res2) => res2.id !== id && res2.tableId === targetTableId && res2.status !== "CANCELLED" /* CANCELLED */ && res2.status !== "ARRIVED" /* ARRIVED */ && Math.abs(new Date(res2.dateTime).getTime() - new Date(dateTime).getTime()) < RESERVATION_CONFLICT_WINDOW_MS
+        );
+        if (conflict) {
+          errorMsg = `Esa mesa ya tiene una reserva a horario cercano (${new Date(conflict.dateTime).toLocaleString("es-CL")}, a nombre de ${conflict.customerName}).`;
+          return;
+        }
+      }
       if (id) {
         const r = state.reservations.find((res2) => res2.id === id);
         if (r) {
           r.customerName = customerName;
           r.customerPhone = customerPhone;
-          r.customerCount = Number(customerCount);
+          r.customerCount = Math.max(1, Number(customerCount) || 1);
           r.dateTime = dateTime;
           r.tableId = tableId || r.tableId;
           r.notes = notes;
           r.status = status || r.status;
-          if (advancePayment !== void 0) r.advancePayment = Number(advancePayment) || 0;
+          if (advancePayment !== void 0) r.advancePayment = Math.max(0, Math.round(Number(advancePayment) || 0));
           if (advancePaymentMethod !== void 0) r.advancePaymentMethod = advancePaymentMethod;
           if (items !== void 0) r.items = items;
           savedRes = r;
@@ -1575,12 +1592,12 @@ async function startServer() {
           id: newId,
           customerName,
           customerPhone,
-          customerCount: Number(customerCount),
+          customerCount: Math.max(1, Number(customerCount) || 1),
           dateTime,
           tableId: tableId || void 0,
           notes: notes || "",
           status: status || "PENDING" /* PENDING */,
-          advancePayment: Number(advancePayment) || 0,
+          advancePayment: Math.max(0, Math.round(Number(advancePayment) || 0)),
           advancePaymentMethod: advancePaymentMethod || void 0,
           items: items || []
         };
@@ -1593,25 +1610,70 @@ async function startServer() {
         }
       }
     });
+    if (errorMsg) {
+      return res.status(400).json({ error: errorMsg });
+    }
     res.json({ success: true, reservation: savedRes });
   });
   app.delete("/api/reservations/:id", (req, res) => {
     const { id } = req.params;
+    const depositAction = req.body?.depositAction;
     let found = false;
+    let errorMsg = "";
     LocalDb.updateState((state) => {
+      if (!state.auditLogs) state.auditLogs = [];
       const idx = state.reservations.findIndex((r) => r.id === id);
-      if (idx !== -1) {
-        const reservation = state.reservations[idx];
-        if (reservation.tableId) {
-          const table = state.tables.find((t) => t.id === reservation.tableId);
-          if (table && table.status === "RESERVED" /* RESERVED */) {
-            table.status = "FREE" /* FREE */;
-          }
+      if (idx === -1) return;
+      const reservation = state.reservations[idx];
+      const hasDeposit = (reservation.advancePayment || 0) > 0;
+      if (hasDeposit && depositAction !== "REFUNDED" && depositAction !== "FORFEITED") {
+        errorMsg = "Indica si el abono fue devuelto o retenido para cancelar la reserva.";
+        return;
+      }
+      if (reservation.tableId) {
+        const table = state.tables.find((t) => t.id === reservation.tableId);
+        if (table && table.status === "RESERVED" /* RESERVED */) {
+          table.status = "FREE" /* FREE */;
         }
-        reservation.status = "CANCELLED" /* CANCELLED */;
-        found = true;
+      }
+      reservation.status = "CANCELLED" /* CANCELLED */;
+      found = true;
+      if (hasDeposit && depositAction === "FORFEITED") {
+        state.payments.push({
+          id: "pay_" + Math.random().toString(36).substr(2, 9),
+          reservationId: reservation.id,
+          amount: reservation.advancePayment || 0,
+          method: reservation.advancePaymentMethod || "CASH" /* CASH */,
+          tip: 0,
+          discount: 0,
+          description: `Abono no reembolsado \u2014 reserva no ejecutada de ${reservation.customerName}`,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+        state.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substr(2, 9),
+          action: "Reserva Cancelada",
+          details: `Reserva de ${reservation.customerName} cancelada. El abono de $${(reservation.advancePayment || 0).toLocaleString("es-CL")} qued\xF3 como ingreso del restaurante.`,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      } else if (hasDeposit && depositAction === "REFUNDED") {
+        state.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substr(2, 9),
+          action: "Reserva Cancelada",
+          details: `Reserva de ${reservation.customerName} cancelada. El abono de $${(reservation.advancePayment || 0).toLocaleString("es-CL")} fue devuelto al cliente.`,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      } else {
+        state.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substr(2, 9),
+          action: "Reserva Cancelada",
+          details: `Reserva de ${reservation.customerName} cancelada.`,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
       }
     });
+    if (errorMsg) {
+      return res.status(400).json({ error: errorMsg });
+    }
     if (!found) {
       return res.status(404).json({ error: "Reserva no encontrada" });
     }
@@ -1633,8 +1695,8 @@ async function startServer() {
   });
   app.post("/api/shifts/open", (req, res) => {
     const { userId, initialCash } = req.body;
-    if (!userId || initialCash === void 0) {
-      return res.status(400).json({ error: "Usuario y caja inicial requeridos" });
+    if (!userId || !Number.isFinite(Number(initialCash)) || Number(initialCash) < 0) {
+      return res.status(400).json({ error: "Usuario y caja inicial v\xE1lida (n\xFAmero no negativo) son requeridos" });
     }
     let openedShift = null;
     LocalDb.updateState((state) => {
@@ -1642,7 +1704,7 @@ async function startServer() {
       const user = state.users.find((u) => u.id === userId);
       const userName = user ? user.name : "Mozo";
       state.shifts.forEach((sh) => {
-        if (sh.status === "OPEN" /* OPEN */) {
+        if (sh.status === "OPEN" /* OPEN */ && sh.userId === userId) {
           sh.status = "CLOSED" /* CLOSED */;
           sh.closedAt = (/* @__PURE__ */ new Date()).toISOString();
           sh.finalCash = sh.finalCash || sh.initialCash;
@@ -1669,8 +1731,8 @@ async function startServer() {
   });
   app.post("/api/shifts/close", (req, res) => {
     const { id, finalCash } = req.body;
-    if (!id || finalCash === void 0) {
-      return res.status(400).json({ error: "ID de turno y arqueo final requeridos" });
+    if (!id || !Number.isFinite(Number(finalCash)) || Number(finalCash) < 0) {
+      return res.status(400).json({ error: "ID de turno y arqueo final v\xE1lido (n\xFAmero no negativo) son requeridos" });
     }
     let closedShift = null;
     LocalDb.updateState((state) => {
@@ -1737,10 +1799,7 @@ async function startServer() {
         if (order.customerPhone) {
           const customer = state.customers.find((c) => c.phone === order.customerPhone);
           if (customer) {
-            const earnedPoints = Math.floor(order.items.reduce((sum, it) => {
-              const p = state.products.find((prod) => prod.id === it.productId);
-              return sum + (p ? p.price : 0) * it.quantity;
-            }, 0) / 100);
+            const earnedPoints = Math.floor(((order.billingSubtotal || 0) - (order.billingDiscount || 0)) / 100);
             if (earnedPoints > 0) {
               customer.points = Math.max(0, customer.points - earnedPoints);
               state.loyaltyTxs.push({
