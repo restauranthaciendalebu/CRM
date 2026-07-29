@@ -3,18 +3,42 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
 
-    function isAdmin() {
+    function isActiveStaff() {
       return request.auth != null
         && request.auth.token.firebase.sign_in_provider != "anonymous"
-        && firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.active == true
-        && firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.role == "ADMIN";
+        && firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data.active == true;
+    }
+
+    function accessData() {
+      return firestore.get(/databases/(default)/documents/access/$(request.auth.uid)).data;
+    }
+
+    // Mirrors Firestore's hasMenuPermission(): an admin, or any staff account
+    // explicitly granted menu-management rights via Personal → Permisos.
+    // This must stay in lockstep with firestore.rules' equivalent function —
+    // it was missed in the first pass here, which let a non-admin save a
+    // product (Firestore allowed it) but silently fail to upload its photo
+    // (Storage still required strict ADMIN).
+    function hasMenuPermission() {
+      return isActiveStaff() && (
+        accessData().role == "ADMIN" ||
+        (
+          accessData().permissions is list &&
+          (
+            "manage_menu" in accessData().permissions ||
+            "products" in accessData().permissions ||
+            "menu" in accessData().permissions ||
+            "carta" in accessData().permissions
+          )
+        )
+      );
     }
 
     // Product photos are public to read (shown on the customer-facing menu),
-    // but only an authenticated ADMIN can upload/replace/delete one.
+    // but only staff with menu-management rights can upload/replace/delete one.
     match /product-images/{fileName} {
       allow read: if true;
-      allow write: if isAdmin()
+      allow write: if hasMenuPermission()
         && request.resource.size < 6 * 1024 * 1024
         && request.resource.contentType.matches('image/.*');
     }
