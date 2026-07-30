@@ -204,8 +204,8 @@ export function printThermalReceipt({
     <h1>🏠 HACIENDA</h1>
     <p>
       Restaurant & Parrilla<br/>
-      Dirección: Av. Ejemplo 1234, Lebu<br/>
-      RUT: 76.XXX.XXX-X<br/>
+      Dirección: Saavedra 669, Lebu<br/>
+      RUT: 11.914.444-2<br/>
       Giro: Restaurant y Servicios de Alimentación
     </p>
   </div>
