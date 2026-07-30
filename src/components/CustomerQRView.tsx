@@ -1,5 +1,5 @@
 import React, { useState, useRef } from "react";
-import { RestaurantState, Product, Category, OrderStatus, PaymentMethod } from "../types";
+import { RestaurantState, Product, Category, OrderStatus, PaymentMethod, DAILY_MENU_CATEGORY_ID } from "../types";
 import {
   Bell,
   Receipt,
@@ -101,8 +101,27 @@ export default function CustomerQRView({ state, tableNumber, onRefreshState }: C
     return true;
   });
 
-  // Group by category for organized display
+  // Today's daily menu: the dishes staff switched on for the day.
+  const dailyMenuProducts = state.products
+    .filter((p) => p.categoryId === DAILY_MENU_CATEGORY_ID && p.isAvailable)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Every daily menu shares one price pair, so read it off the first dish.
+  const dailyMenuPrice = dailyMenuProducts[0]?.price ?? 0;
+  const dailyMenuPublicServicePrice = dailyMenuProducts[0]?.publicServicePrice ?? null;
+  const dailyMenuIncludes = (state.dailyMenuChoiceGroups || [])
+    .filter((group) => group.name.trim())
+    .map((group) => group.name.trim().toLowerCase())
+    .join(", ");
+
+  // The highlighted daily-menu block only renders on the unfiltered menu, so
+  // hide the category here just in that case to avoid listing the same dishes
+  // twice — while still letting a search for "cazuela" find them.
+  const showsDailyMenuBlock = selectedCategory === "all" && !searchTerm && dailyMenuProducts.length > 0;
+
+  // Group by category for organized display.
   const categoriesWithProducts = state.categories
+    .filter((cat) => !(showsDailyMenuBlock && cat.id === DAILY_MENU_CATEGORY_ID))
     .map((cat) => ({
       ...cat,
       products: filteredProducts
@@ -332,7 +351,7 @@ ${menuHTML}
           >
             📋 Todo
           </button>
-          {state.categories.map((cat) => (
+          {state.categories.filter((cat) => cat.id !== DAILY_MENU_CATEGORY_ID).map((cat) => (
             <button
               key={cat.id}
               onClick={() => setSelectedCategory(cat.id)}
@@ -421,6 +440,47 @@ ${menuHTML}
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Daily menu — only rendered on the days something is switched on ── */}
+      {showsDailyMenuBlock && (
+        <div className="px-4 mb-6">
+          <div className="rounded-2xl border border-amber-500/30 bg-gradient-to-b from-amber-500/10 to-transparent p-4">
+            <div className="flex items-center gap-2">
+              <UtensilsCrossed className="w-4 h-4 text-amber-500" />
+              <h2 className="text-xs font-black uppercase tracking-[2px] text-amber-500">
+                Menú del Día
+              </h2>
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="text-white font-black text-lg">{formatPrice(dailyMenuPrice)}</span>
+              {dailyMenuPublicServicePrice !== null && (
+                <span className="text-xs text-zinc-300">
+                  <span className="font-bold text-amber-400">{formatPrice(dailyMenuPublicServicePrice)}</span> servicio público
+                </span>
+              )}
+            </div>
+
+            {dailyMenuIncludes && (
+              <p className="text-[11px] text-zinc-400 mt-1">Incluye {dailyMenuIncludes}.</p>
+            )}
+
+            <div className="mt-3 space-y-1.5">
+              {dailyMenuProducts.map((product) => (
+                <div key={product.id} className="flex items-start gap-2">
+                  <span className="text-amber-500/70 text-xs leading-5">•</span>
+                  <div className="min-w-0">
+                    <span className="text-sm font-bold text-zinc-100">{product.name}</span>
+                    {product.description && (
+                      <p className="text-[11px] text-zinc-500 leading-tight">{product.description}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

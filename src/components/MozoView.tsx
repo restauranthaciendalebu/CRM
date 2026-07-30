@@ -13,6 +13,7 @@ import {
   OrderItem,
   SelectedItemModifier,
   Reservation,
+  DAILY_MENU_CATEGORY_ID,
   ReservationStatus,
   Role
 } from "../types";
@@ -36,6 +37,7 @@ import {
   Users,
   Printer,
   ReceiptText,
+  UtensilsCrossed,
   Trash2,
   Minus,
   Pencil,
@@ -50,6 +52,7 @@ import { printThermalReceipt, printThermalZetaReport } from "./ThermalReceipt";
 import { isDirectServiceProduct } from "../orderUtils";
 import AddTableModal from "./AddTableModal";
 import WaiterReceiptHistory from "./WaiterReceiptHistory";
+import DailyMenuManager from "./DailyMenuManager";
 import { allocateRemainingAdjustment, getNextPaymentAmount, getRemainingBalance } from "../billingUtils";
 import { resolveNotificationDirectly } from "../dbClient";
 
@@ -126,6 +129,7 @@ export default function MozoView({
   const [isSendingKitchen, setIsSendingKitchen] = useState(false);
   const [isAddTableOpen, setIsAddTableOpen] = useState(false);
   const [isReceiptHistoryOpen, setIsReceiptHistoryOpen] = useState(false);
+  const [isDailyMenuOpen, setIsDailyMenuOpen] = useState(false);
   const [isUpdatingGuestCount, setIsUpdatingGuestCount] = useState(false);
 
   // Billing modal
@@ -657,6 +661,57 @@ export default function MozoView({
 
   const getWaiterCartUnitPrice = (item: (typeof waiterCart)[number]) =>
     Math.max(0, item.product.price + item.modifiers.reduce((sum, modifier) => sum + modifier.extraPrice, 0) + getWaiterCartAdjustment(item));
+
+  /* ─── Daily menu: price tier and included choices ───
+     Both ride on the existing modifier mechanism, so the reduced rate and the
+     chosen consomé/ensalada/jugo flow through totals, receipts and reports
+     without the pricing code needing to know anything about daily menus. */
+  const PRICE_TIER_MODIFIER_ID = "daily_menu_tier";
+  const CHOICE_MODIFIER_PREFIX = "daily_menu_choice:";
+
+  const isPublicServiceTier = (item: (typeof waiterCart)[number]) =>
+    item.modifiers.some((modifier) => modifier.modifierId === PRICE_TIER_MODIFIER_ID);
+
+  const setPriceTier = (index: number, publicService: boolean) => {
+    setWaiterCart((previous) => previous.map((candidate, candidateIndex) => {
+      if (candidateIndex !== index) return candidate;
+      const withoutTier = candidate.modifiers.filter((m) => m.modifierId !== PRICE_TIER_MODIFIER_ID);
+      if (!publicService || !candidate.product.publicServicePrice) {
+        return { ...candidate, modifiers: withoutTier };
+      }
+      return {
+        ...candidate,
+        modifiers: [...withoutTier, {
+          modifierId: PRICE_TIER_MODIFIER_ID,
+          optionId: "servicio_publico",
+          name: "Servicio público",
+          extraPrice: candidate.product.publicServicePrice - candidate.product.price,
+        }],
+      };
+    }));
+  };
+
+  const getChoiceValue = (item: (typeof waiterCart)[number], groupId: string) =>
+    item.modifiers.find((modifier) => modifier.modifierId === CHOICE_MODIFIER_PREFIX + groupId)?.optionId || "";
+
+  const setChoice = (index: number, group: { id: string; name: string }, value: string) => {
+    setWaiterCart((previous) => previous.map((candidate, candidateIndex) => {
+      if (candidateIndex !== index) return candidate;
+      const withoutChoice = candidate.modifiers.filter(
+        (m) => m.modifierId !== CHOICE_MODIFIER_PREFIX + group.id,
+      );
+      if (!value) return { ...candidate, modifiers: withoutChoice };
+      return {
+        ...candidate,
+        modifiers: [...withoutChoice, {
+          modifierId: CHOICE_MODIFIER_PREFIX + group.id,
+          optionId: value,
+          name: `${group.name}: ${value}`,
+          extraPrice: 0,
+        }],
+      };
+    }));
+  };
 
   const createOrderItemPayload = (item: (typeof waiterCart)[number], index: number) => {
     const adjustment = getWaiterCartAdjustment(item);
@@ -1261,6 +1316,14 @@ export default function MozoView({
               aria-label="Abrir historial de boletas"
             >
               <ReceiptText className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setIsDailyMenuOpen(true)}
+              className="h-9 w-9 rounded-lg border border-zinc-200 bg-white text-zinc-700 hover:border-amber-400 hover:text-amber-700 flex items-center justify-center"
+              title="Menú de hoy"
+              aria-label="Marcar los menús del día disponibles"
+            >
+              <UtensilsCrossed className="w-4 h-4" />
             </button>
 
             {onChangeRole && (activeUser?.role === Role.ADMIN || (activeUser?.permissions && activeUser.permissions.length > 0)) && (
@@ -2364,6 +2427,52 @@ export default function MozoView({
                             </span>
                           </div>
 
+                          {/* Daily menu: price tier + what comes with it */}
+                          {item.product.categoryId === DAILY_MENU_CATEGORY_ID && (
+                            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/60 p-2 space-y-2">
+                              {item.product.publicServicePrice ? (
+                                <div className="grid grid-cols-2 gap-1 rounded-md bg-white p-1 border border-amber-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPriceTier(index, false)}
+                                    className={`rounded px-1 py-1 text-[10px] font-bold cursor-pointer ${
+                                      !isPublicServiceTier(item) ? "bg-zinc-900 text-white" : "text-zinc-600"
+                                    }`}
+                                  >
+                                    Todo público
+                                    <span className="block text-[9px] font-extrabold">{formatCLP(item.product.price)}</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setPriceTier(index, true)}
+                                    className={`rounded px-1 py-1 text-[10px] font-bold cursor-pointer ${
+                                      isPublicServiceTier(item) ? "bg-amber-600 text-white" : "text-zinc-600"
+                                    }`}
+                                  >
+                                    Servicio público
+                                    <span className="block text-[9px] font-extrabold">{formatCLP(item.product.publicServicePrice)}</span>
+                                  </button>
+                                </div>
+                              ) : null}
+
+                              {(state.dailyMenuChoiceGroups || []).map((group) => (
+                                <div key={group.id}>
+                                  <label className="text-[9px] font-black uppercase text-amber-800 block">{group.name}</label>
+                                  <select
+                                    value={getChoiceValue(item, group.id)}
+                                    onChange={(e) => setChoice(index, group, e.target.value)}
+                                    className="w-full bg-white border border-amber-200 rounded px-1.5 py-1 text-[10px] text-zinc-800 outline-none focus:border-amber-500"
+                                  >
+                                    <option value="">Elegir…</option>
+                                    {group.options.map((option) => (
+                                      <option key={option} value={option}>{option}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
                           <div className="mt-2 rounded-lg border border-zinc-200 bg-white p-2">
                             <div className="grid grid-cols-2 gap-1 rounded-md bg-zinc-100 p-1">
                               <button
@@ -2954,6 +3063,15 @@ export default function MozoView({
         <WaiterReceiptHistory
           state={state}
           onClose={() => setIsReceiptHistoryOpen(false)}
+        />
+      )}
+
+      {isDailyMenuOpen && (
+        <DailyMenuManager
+          state={state}
+          operatorName={activeUser?.name || "Garzón"}
+          onClose={() => setIsDailyMenuOpen(false)}
+          onChanged={refreshStateIfNeeded}
         />
       )}
 

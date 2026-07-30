@@ -14,7 +14,8 @@ import {
   PaymentMethod,
   User,
   Role,
-  RecoveryRecord
+  RecoveryRecord,
+  DAILY_MENU_CATEGORY_ID
 } from "../types";
 import {
   createBackupEnvelope,
@@ -127,6 +128,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [editingProductModal, setEditingProductModal] = useState<Product | null>(null);
   const [prodName, setProdName] = useState("");
   const [prodPrice, setProdPrice] = useState(0);
+  const [prodPublicServicePrice, setProdPublicServicePrice] = useState(0);
   const [prodCategoryId, setProdCategoryId] = useState("");
   const [prodDescription, setProdDescription] = useState("");
   const [prodImageUrl, setProdImageUrl] = useState("");
@@ -721,6 +723,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setEditingProductModal(null);
     setProdName("");
     setProdPrice(0);
+    setProdPublicServicePrice(0);
     setProdCategoryId(state.categories[0]?.id || "");
     setProdDescription("");
     setProdImageUrl("");
@@ -735,6 +738,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     setEditingProductModal(product);
     setProdName(product.name);
     setProdPrice(product.price);
+    setProdPublicServicePrice(product.publicServicePrice || 0);
     setProdCategoryId(product.categoryId);
     setProdDescription(product.description || "");
     setProdImageUrl(product.imageUrl || "");
@@ -819,6 +823,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
           id: editingProductModal?.id,
           name: prodName,
           price: prodPrice,
+          publicServicePrice: prodPublicServicePrice > 0 ? prodPublicServicePrice : undefined,
           categoryId: prodCategoryId,
           description: prodDescription,
           imageUrl: cleanImageUrl,
@@ -2341,6 +2346,25 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                   />
                 </div>
               </div>
+
+              {prodCategoryId === DAILY_MENU_CATEGORY_ID && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-zinc-700">
+                    Precio servicio público ($ CLP)
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Ej: 4800"
+                    value={prodPublicServicePrice || ""}
+                    onChange={(e) => setProdPublicServicePrice(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-zinc-950"
+                  />
+                  <p className="text-[10px] text-zinc-400">
+                    Precio rebajado. El garzón elige cuál cobrar al agregar el menú. Déjalo vacío si este plato tiene un solo precio.
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-zinc-700">Descripción / Ingredientes</label>

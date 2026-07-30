@@ -99,6 +99,9 @@ export interface Product {
   description: string;
   descriptionEn?: string;
   price: number;
+  // Reduced "servicio público" rate for daily-menu dishes. When set, the
+  // waiter picks which of the two rates applies as they add the dish.
+  publicServicePrice?: number;
   imageUrl?: string;
   categoryId: string;
   allergens: string[]; // e.g. ["Gluten", "Lácteos"]
@@ -106,6 +109,19 @@ export interface Product {
   isRecommended?: boolean;
   recipe: RecipeItem[]; // list of ingredients required to make this
   requiresKitchen?: boolean; // false = served directly (e.g. bottled wine, water). Default: true
+}
+
+// Category holding the rotating daily menu. Dishes here are toggled on and
+// off each day from the "Menú de Hoy" screen; only the ones switched on that
+// day reach the customer-facing menu.
+export const DAILY_MENU_CATEGORY_ID = "cat_menu_dia";
+
+// What comes with every daily menu (consomé, ensalada, jugo…). Editable by
+// the restaurant so the options can change without a code release.
+export interface DailyMenuChoiceGroup {
+  id: string;
+  name: string;      // e.g. "Jugo"
+  options: string[]; // e.g. ["Frambuesa", "Piña", "Naranja"]
 }
 
 export interface Ingredient {
@@ -299,4 +315,5 @@ export interface RestaurantState {
   inventoryTransactions?: InventoryTransaction[];
   recoveryArchive?: RecoveryRecord[];
   onlyViewMenuQr?: boolean;
+  dailyMenuChoiceGroups?: DailyMenuChoiceGroup[];
 }

@@ -33,6 +33,7 @@ import {
   Table,
   Customer,
   Product,
+  DAILY_MENU_CATEGORY_ID,
   User,
   RecoveryRecord,
   RecoverableCollection,
@@ -228,6 +229,7 @@ export async function refreshStateFromServer() {
   const configSnapshot = await getDoc(doc(db, "config", "restaurant"));
   if (configSnapshot.exists()) {
     next.onlyViewMenuQr = Boolean(configSnapshot.data().onlyViewMenuQr);
+    next.dailyMenuChoiceGroups = configSnapshot.data().dailyMenuChoiceGroups || [];
   }
   currentCachedState = next;
   publishState(next);
@@ -294,6 +296,7 @@ async function startFirestoreSubscriptions() {
 
   firestoreUnsubscribers.push(onSnapshot(doc(db, "config", "restaurant"), (snapshot) => {
     next.onlyViewMenuQr = Boolean(snapshot.data()?.onlyViewMenuQr);
+    next.dailyMenuChoiceGroups = snapshot.data()?.dailyMenuChoiceGroups || [];
     commit("config");
   }, (error) => {
     console.error("No se pudo leer la configuración", error);
@@ -493,9 +496,19 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
           transaction.delete(reference);
         }
       }
-      if (remoteBase.onlyViewMenuQr !== candidate.onlyViewMenuQr) {
+      // One document holds every config field, so always write the whole set.
+      // Writing just the changed key would blank the others, since this is a
+      // full set() rather than a merge.
+      const configChanged =
+        remoteBase.onlyViewMenuQr !== candidate.onlyViewMenuQr ||
+        JSON.stringify(remoteBase.dailyMenuChoiceGroups || []) !==
+          JSON.stringify(candidate.dailyMenuChoiceGroups || []);
+      if (configChanged) {
         transaction.set(doc(db, "config", "restaurant"), {
           onlyViewMenuQr: Boolean(candidate.onlyViewMenuQr),
+          dailyMenuChoiceGroups: JSON.parse(
+            JSON.stringify(candidate.dailyMenuChoiceGroups || []),
+          ),
         });
       }
       return candidate;
@@ -1571,9 +1584,15 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
 
     // 11. Admin Menu & Category Actions
     if (path === "/api/products" && method === "POST") {
-      const { id, name, description, price, imageUrl, categoryId, allergens, isAvailable, isRecommended, recipe, operatorName } = body;
+      const { id, name, description, price, publicServicePrice, imageUrl, categoryId, allergens, isAvailable, isRecommended, recipe, operatorName } = body;
       let savedProduct: any = null;
       let errorMsg = "";
+
+      // Optional second rate; absent or zero means the dish has a single price.
+      const normalizedPublicServicePrice =
+        publicServicePrice === undefined || publicServicePrice === null || publicServicePrice === ""
+          ? undefined
+          : Math.max(0, Math.round(Number(publicServicePrice) || 0)) || undefined;
 
       const cleanImageUrl = imageUrl && imageUrl.startsWith("data:image/") && imageUrl.length > 30000
         ? "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=60"
@@ -1590,6 +1609,11 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
               if (name) prod.name = name;
               if (description !== undefined) prod.description = description;
               prod.price = Number(price);
+              if (normalizedPublicServicePrice === undefined) {
+                delete prod.publicServicePrice;
+              } else {
+                prod.publicServicePrice = normalizedPublicServicePrice;
+              }
               prod.imageUrl = cleanImageUrl;
               if (categoryId) prod.categoryId = categoryId;
               if (allergens) prod.allergens = allergens;
@@ -1617,7 +1641,10 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
               allergens: allergens || [],
               isAvailable: isAvailable !== undefined ? isAvailable : true,
               isRecommended: !!isRecommended,
-              recipe: recipe || []
+              recipe: recipe || [],
+              ...(normalizedPublicServicePrice !== undefined
+                ? { publicServicePrice: normalizedPublicServicePrice }
+                : {}),
             };
             s.products.push(savedProduct);
 
@@ -2107,6 +2134,100 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         return createResponse({ error: "Reserva no encontrada" }, 404);
       }
       return createResponse({ success: true });
+    }
+
+    // One-time setup: the app has no category editor, so the daily-menu
+    // category has to be created for it. Also seeds any dishes still missing,
+    // matching on name so it can be re-run safely to add later additions.
+    if (path === "/api/admin/daily-menu/setup" && method === "POST") {
+      const { dishes, price, publicServicePrice, operatorName } = body;
+      const basePrice = Math.max(0, Math.round(Number(price) || 0));
+      const reducedPrice = Math.max(0, Math.round(Number(publicServicePrice) || 0));
+      if (!Array.isArray(dishes) || basePrice <= 0) {
+        return createResponse({ error: "Faltan los platos o el precio base." }, 400);
+      }
+
+      let createdCategory = false;
+      let createdCount = 0;
+
+      await updateState(s => {
+        if (!s.categories.some(c => c.id === DAILY_MENU_CATEGORY_ID)) {
+          s.categories.push({
+            id: DAILY_MENU_CATEGORY_ID,
+            name: "Menú del Día",
+            icon: "UtensilsCrossed",
+          });
+          createdCategory = true;
+        }
+
+        const existingNames = new Set(
+          s.products
+            .filter(p => p.categoryId === DAILY_MENU_CATEGORY_ID)
+            .map(p => p.name.trim().toLocaleLowerCase()),
+        );
+
+        for (const raw of dishes) {
+          const name = String(raw || "").trim();
+          if (!name || existingNames.has(name.toLocaleLowerCase())) continue;
+          existingNames.add(name.toLocaleLowerCase());
+          s.products.push({
+            id: "p_" + Math.random().toString(36).substring(2, 11),
+            name,
+            description: "",
+            price: basePrice,
+            ...(reducedPrice > 0 ? { publicServicePrice: reducedPrice } : {}),
+            imageUrl: "",
+            categoryId: DAILY_MENU_CATEGORY_ID,
+            allergens: [],
+            // Start switched off: staff decides each day what is actually on.
+            isAvailable: false,
+            isRecommended: false,
+            recipe: [],
+          });
+          createdCount++;
+        }
+
+        if (createdCategory || createdCount > 0) {
+          if (!s.auditLogs) s.auditLogs = [];
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Menú del Día",
+            details: `Se preparó el menú del día (${createdCategory ? "categoría creada, " : ""}${createdCount} plato(s) agregado(s)) por ${operatorName || "Administrador"}.`,
+            createdAt: new Date().toISOString(),
+          });
+        }
+      });
+
+      return createResponse({ success: true, createdCategory, createdCount });
+    }
+
+    // Daily-menu accompaniment options (consomé, ensalada, jugo…)
+    if (path === "/api/admin/config/daily-menu-choices" && method === "POST") {
+      const { groups, operatorName } = body;
+      if (!Array.isArray(groups)) {
+        return createResponse({ error: "Formato de opciones inválido." }, 400);
+      }
+      const cleanGroups = groups
+        .map((group: any) => ({
+          id: typeof group?.id === "string" && group.id ? group.id : "grp_" + Math.random().toString(36).substring(2, 11),
+          name: String(group?.name || "").trim(),
+          options: Array.isArray(group?.options)
+            ? group.options.map((option: any) => String(option || "").trim()).filter(Boolean)
+            : [],
+        }))
+        .filter((group) => group.name);
+
+      await updateState(s => {
+        s.dailyMenuChoiceGroups = cleanGroups;
+        if (!s.auditLogs) s.auditLogs = [];
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          action: "Ajuste de Sistema",
+          details: `Se actualizaron las opciones del menú del día (${cleanGroups.map(g => g.name).join(", ") || "sin grupos"}) por ${operatorName || "Administrador"}.`,
+          createdAt: new Date().toISOString(),
+        });
+      });
+      return createResponse({ success: true, groups: cleanGroups });
     }
 
     // Update Config QR Mode
