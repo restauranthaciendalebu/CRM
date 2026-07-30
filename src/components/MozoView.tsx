@@ -130,6 +130,8 @@ export default function MozoView({
   const [isAddTableOpen, setIsAddTableOpen] = useState(false);
   const [isReceiptHistoryOpen, setIsReceiptHistoryOpen] = useState(false);
   const [isDailyMenuOpen, setIsDailyMenuOpen] = useState(false);
+  const [releasingTable, setReleasingTable] = useState<Table | null>(null);
+  const [isReleasingTable, setIsReleasingTable] = useState(false);
   const [isUpdatingGuestCount, setIsUpdatingGuestCount] = useState(false);
 
   // Billing modal
@@ -374,6 +376,33 @@ export default function MozoView({
   };
 
 
+
+  const handleReleaseTable = async (table: Table) => {
+    if (isReleasingTable) return;
+    setIsReleasingTable(true);
+    try {
+      const res = await fetch(`/api/tables/${table.id}/release`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operatorName: activeUser?.name || "Garzón" }),
+      });
+      if (res.ok) {
+        setReleasingTable(null);
+        setSelectedTable({ ...table, status: TableStatus.FREE });
+        showBanner(`Mesa ${table.number} liberada.`);
+        refreshStateIfNeeded();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setReleasingTable(null);
+        showBanner(err.error || "No se pudo liberar la mesa.", "error");
+      }
+    } catch {
+      setReleasingTable(null);
+      showBanner("Error de conexión al liberar la mesa.", "error");
+    } finally {
+      setIsReleasingTable(false);
+    }
+  };
 
   // ---- RESERVATION HANDLERS ----
   const resetReservationForm = () => {
@@ -2259,6 +2288,17 @@ export default function MozoView({
                         ? activeOrderPaid > 0 ? "Continuar cobro" : "Cobrar / Cerrar Mesa"
                         : "Esperando salida de cocina"}
                     </button>
+
+                    {/* Nothing was ordered: the bill button can never enable,
+                        so this is the only way back to a free table. */}
+                    {activeOrder.items.length === 0 && (
+                      <button
+                        onClick={() => setReleasingTable(selectedTable)}
+                        className="w-full mt-2 bg-white border border-zinc-200 hover:border-red-300 hover:text-red-700 text-zinc-600 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" /> Liberar mesa sin consumo
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -3064,6 +3104,36 @@ export default function MozoView({
           state={state}
           onClose={() => setIsReceiptHistoryOpen(false)}
         />
+      )}
+
+      {releasingTable && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-zinc-200 p-5">
+            <h3 className="font-bold text-zinc-900 text-sm">Liberar Mesa {releasingTable.number}</h3>
+            <p className="text-xs text-zinc-500 mt-2">
+              La mesa vuelve a quedar disponible. Se usa cuando los comensales se
+              retiraron sin pedir nada.
+            </p>
+            <p className="text-[11px] text-zinc-400 mt-2">
+              No afecta las ventas y queda registrado en Auditoría.
+            </p>
+            <div className="flex gap-2 mt-5">
+              <button
+                onClick={() => setReleasingTable(null)}
+                className="flex-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 font-bold py-2.5 rounded-xl text-xs cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => handleReleaseTable(releasingTable)}
+                disabled={isReleasingTable}
+                className="flex-1 bg-zinc-900 hover:bg-zinc-800 disabled:opacity-60 text-white font-bold py-2.5 rounded-xl text-xs cursor-pointer"
+              >
+                {isReleasingTable ? "Liberando..." : "Liberar mesa"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {isDailyMenuOpen && (

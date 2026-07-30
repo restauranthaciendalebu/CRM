@@ -846,6 +846,54 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       return createResponse({ success: true, order: targetOrder, state: updated });
     }
 
+    // Free a table opened by mistake, or where the party left before ordering.
+    // Restricted to orders with nothing on them: once something has been
+    // ordered the table has to be billed, or voided by an admin, so real
+    // consumption can never be wiped out by this shortcut.
+    const tableReleaseMatch = path.match(/^\/api\/tables\/([^\/]+)\/release$/);
+    if (tableReleaseMatch && method === "POST") {
+      const id = tableReleaseMatch[1];
+      const { operatorName } = body;
+      let errorMsg = "";
+
+      await updateState(s => {
+        const table = s.tables.find(t => t.id === id);
+        if (!table) {
+          errorMsg = "Mesa no encontrada";
+          return;
+        }
+
+        const openOrders = s.orders.filter(o => o.tableId === id && o.status !== OrderStatus.CLOSED);
+        const withItems = openOrders.find(o => o.items.length > 0);
+        if (withItems) {
+          errorMsg = "Esta mesa ya tiene platos pedidos. Cóbrala para cerrarla, o pide a administración que anule el pedido.";
+          return;
+        }
+
+        const now = new Date().toISOString();
+        openOrders.forEach(order => {
+          order.status = OrderStatus.CLOSED;
+          order.voided = true;
+          order.updatedAt = now;
+        });
+
+        table.status = TableStatus.FREE;
+
+        if (!s.auditLogs) s.auditLogs = [];
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          action: "Mesa Liberada",
+          details: `${operatorName || "Personal"} liberó la Mesa ${table.number} sin consumo (los comensales se retiraron sin pedir).`,
+          createdAt: now,
+        });
+      });
+
+      if (errorMsg) {
+        return createResponse({ error: errorMsg }, 400);
+      }
+      return createResponse({ success: true });
+    }
+
     // 4. Create Order / Add order from Customer QR
     if (path === "/api/orders" && method === "POST") {
       const { tableId, items, customerCount, notes, customerPhone } = body;
