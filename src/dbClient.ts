@@ -88,7 +88,23 @@ const COLLECTION_FIELDS = [
 type CollectionField = typeof COLLECTION_FIELDS[number];
 
 const PUBLIC_COLLECTIONS = ["tables", "categories", "products"] as const;
-const WAITER_COLLECTIONS = COLLECTION_FIELDS.filter((field) => field !== "recoveryArchive");
+
+// Append-only history: written from every screen, but only ever read back in
+// the admin reports. Left out of the operational screens' subscriptions —
+// they grow without bound, so subscribing a phone to them means the whole
+// history is re-downloaded on every single sign-in, getting slower each day.
+// Writes still work: updateState diffs against the local cache, and appending
+// to an empty one produces exactly the new documents.
+const HISTORY_ONLY_COLLECTIONS: CollectionField[] = [
+  "auditLogs",
+  "inventoryTransactions",
+  "loyaltyTxs",
+  "recoveryArchive",
+];
+
+const WAITER_COLLECTIONS = COLLECTION_FIELDS.filter(
+  (field) => !HISTORY_ONLY_COLLECTIONS.includes(field),
+);
 const KITCHEN_COLLECTIONS: CollectionField[] = [
   "users",
   "tables",
@@ -97,8 +113,6 @@ const KITCHEN_COLLECTIONS: CollectionField[] = [
   "ingredients",
   "orders",
   "notifications",
-  "auditLogs",
-  "inventoryTransactions",
   "promotions",
 ];
 const RECOVERABLE_COLLECTIONS = new Set<RecoverableCollection>([
