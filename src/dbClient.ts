@@ -599,6 +599,35 @@ function authEmail(username: string) {
   return `${normalizeUsername(username).replace(/[^a-z0-9._-]/g, "")}@staff.restaurant-hacienda.local`;
 }
 
+// Staff sign in from phones and tablets on restaurant wifi, where a single
+// request dropping is routine. Firebase surfaces that as
+// auth/network-request-failed and gives up, so retry briefly before telling
+// the user anything — one lost packet shouldn't read as a failed login.
+const AUTH_RETRY_DELAYS_MS = [400, 1200];
+
+function isTransientAuthError(error: any) {
+  return error?.code === "auth/network-request-failed"
+    || error?.code === "auth/timeout"
+    || error?.code === "auth/internal-error";
+}
+
+async function signInWithRetry(email: string, password: string) {
+  let lastError: any;
+  for (let attempt = 0; attempt <= AUTH_RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      return await signInWithEmailAndPassword(auth, email, password);
+    } catch (error: any) {
+      lastError = error;
+      // A wrong password must fail immediately — only retry connection faults.
+      if (!isTransientAuthError(error) || attempt === AUTH_RETRY_DELAYS_MS.length) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, AUTH_RETRY_DELAYS_MS[attempt]));
+    }
+  }
+  throw lastError;
+}
+
 async function assertCurrentAdmin() {
   const currentUser = auth.currentUser;
   if (!currentUser || currentUser.isAnonymous) throw new Error("Acceso no autorizado.");
@@ -700,8 +729,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       }
 
       const normalizedInput = normalizeUsername(username);
-      const credential = await signInWithEmailAndPassword(
-        auth,
+      const credential = await signInWithRetry(
         authEmail(normalizedInput),
         authPassword(password),
       );
@@ -2536,6 +2564,12 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     }
     if (error?.code === "auth/too-many-requests") {
       return createResponse({ error: "Demasiados intentos. Espera unos minutos e intenta nuevamente." }, 429);
+    }
+    if (isTransientAuthError(error)) {
+      return createResponse(
+        { error: "Sin conexión con el servidor. Revisa el internet del local y vuelve a intentar." },
+        503,
+      );
     }
     return createResponse({ error: error.message || "Error interno del servidor simulado" }, 500);
   }
