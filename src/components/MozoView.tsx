@@ -38,6 +38,7 @@ import {
   Printer,
   ReceiptText,
   UtensilsCrossed,
+  Check,
   Trash2,
   Minus,
   Pencil,
@@ -132,6 +133,7 @@ export default function MozoView({
   const [isDailyMenuOpen, setIsDailyMenuOpen] = useState(false);
   const [releasingTable, setReleasingTable] = useState<Table | null>(null);
   const [isReleasingTable, setIsReleasingTable] = useState(false);
+  const [isFinalizingPaidTable, setIsFinalizingPaidTable] = useState(false);
   const [isUpdatingGuestCount, setIsUpdatingGuestCount] = useState(false);
 
   // Billing modal
@@ -298,6 +300,15 @@ export default function MozoView({
     : [];
   const activeOrderPaid = activeOrderPayments.reduce((sum, payment) => sum + payment.amount, 0);
   const activeOrderHasPayments = Boolean(activeOrder && state.payments.some((payment) => payment.orderId === activeOrder.id));
+  // Paid in full yet still sitting open: billing is what closes an order, and
+  // the charge button disables itself at $0, so without an explicit way out
+  // the table would stay occupied for good.
+  const isPaidButStillOpen = Boolean(
+    activeOrder
+    && activeOrder.status !== OrderStatus.CLOSED
+    && activeOrder.billingTotal !== undefined
+    && activeOrderPaid >= activeOrder.billingTotal,
+  );
   const hasPendingKitchenItems = activeOrder?.items.some((it) => it.status === OrderItemStatus.PENDING) ?? false;
   const canBillActiveOrder = Boolean(
     activeOrder?.items.length && activeOrder.items.every((item) =>
@@ -376,6 +387,30 @@ export default function MozoView({
   };
 
 
+
+  const handleFinalizePaidTable = async () => {
+    if (!activeOrder || isFinalizingPaidTable) return;
+    setIsFinalizingPaidTable(true);
+    try {
+      const res = await fetch(`/api/orders/${activeOrder.id}/close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payments: [] }),
+      });
+      if (res.ok) {
+        showBanner("Mesa cerrada. Ya estaba pagada por completo.");
+        if (selectedTable) setSelectedTable({ ...selectedTable, status: TableStatus.FREE });
+        refreshStateIfNeeded();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showBanner(err.error || "No se pudo cerrar la mesa.", "error");
+      }
+    } catch {
+      showBanner("Error de conexión al cerrar la mesa.", "error");
+    } finally {
+      setIsFinalizingPaidTable(false);
+    }
+  };
 
   const handleReleaseTable = async (table: Table) => {
     if (isReleasingTable) return;
@@ -2259,6 +2294,16 @@ export default function MozoView({
                       </div>
                     )}
 
+                    {isPaidButStillOpen ? (
+                      <button
+                        onClick={handleFinalizePaidTable}
+                        disabled={isFinalizingPaidTable}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-extrabold py-3.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-md cursor-pointer"
+                      >
+                        <Check className="w-4 h-4" />
+                        {isFinalizingPaidTable ? "Cerrando..." : "Cerrar mesa (ya pagada)"}
+                      </button>
+                    ) : (
                     <button
                       onClick={() => {
                         if (!canBillActiveOrder) return;
@@ -2288,6 +2333,7 @@ export default function MozoView({
                         ? activeOrderPaid > 0 ? "Continuar cobro" : "Cobrar / Cerrar Mesa"
                         : "Esperando salida de cocina"}
                     </button>
+                    )}
 
                     {/* Nothing was ordered: the bill button can never enable,
                         so this is the only way back to a free table. */}

@@ -1447,8 +1447,28 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           .reduce((sum, payment) => sum + payment.amount, 0);
         const balanceBeforePayment = getRemainingBalance(billingTotal, alreadyPaid);
 
-        if (balanceBeforePayment <= 0 || order.status === OrderStatus.CLOSED) {
+        if (order.status === OrderStatus.CLOSED) {
           errorMsg = "Esta mesa ya se encuentra pagada por completo. Se ha evitado un cobro duplicado.";
+          return;
+        }
+        if (balanceBeforePayment <= 0) {
+          // Fully paid but never finalised — refusing outright used to strand
+          // the table forever, because billing is the only thing that closes
+          // an order and the charge button disables itself at $0. Close it
+          // out instead, without recording another payment.
+          const paidTable = s.tables.find(t => t.id === order.tableId);
+          order.status = OrderStatus.CLOSED;
+          order.updatedAt = new Date().toISOString();
+          if (paidTable) paidTable.status = TableStatus.FREE;
+          orderClosed = true;
+          remainingBalance = 0;
+          if (!s.auditLogs) s.auditLogs = [];
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Mesa Cerrada",
+            details: `Se cerró la Mesa ${paidTable ? paidTable.number : "?"}, que ya estaba pagada por completo, sin registrar un nuevo cobro.`,
+            createdAt: new Date().toISOString(),
+          });
           return;
         }
         if (requestedPayments.length !== 1) {
