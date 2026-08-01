@@ -1331,6 +1331,27 @@ async function startServer() {
     res.json(sanitizeForClient({ success: true, state: LocalDb.getState() }));
   });
 
+  // Update Config: the hour one business day hands over to the next. Kept in
+  // step with the same route in dbClient.ts, which is what production runs.
+  app.post("/api/admin/config/business-day-start", (req, res) => {
+    const { businessDayStartHour, userName } = req.body;
+    const requested = Number(businessDayStartHour);
+    if (!Number.isInteger(requested) || requested < 0 || requested > 23) {
+      return res.status(400).json({ error: "La hora de corte debe ser un número entero entre 0 y 23" });
+    }
+    LocalDb.updateState(state => {
+      state.businessDayStartHour = requested;
+      if (!state.auditLogs) state.auditLogs = [];
+      state.auditLogs.push({
+        id: "audit_" + Math.random().toString(36).substr(2, 9),
+        action: "Ajuste de Sistema",
+        details: `Se cambió el inicio de la jornada a las ${requested}:00 por ${userName || "Administrador"}. Los reportes ahora cuentan de ${requested}:00 a ${requested}:00 del día siguiente.`,
+        createdAt: new Date().toISOString()
+      });
+    });
+    res.json(sanitizeForClient({ success: true, state: LocalDb.getState() }));
+  });
+
   // 14. Shifts (Work sessions)
   app.post("/api/shifts/open", (req, res) => {
     const { userId, initialCash } = req.body;

@@ -45,6 +45,7 @@ import { createTable, ensureMinimumTables } from "./tableUtils";
 import { getRemainingBalance } from "./billingUtils";
 import { parseAndValidateBackup } from "./backupUtils";
 import { shouldArchiveEntityChange } from "./recoveryUtils";
+import { DEFAULT_BUSINESS_DAY_START_HOUR, normalizeBusinessDayStartHour } from "./businessDayUtils";
 
 // Minimum gap required between two reservations on the same table, so a
 // table can't be double-booked for overlapping dining windows.
@@ -150,6 +151,7 @@ function createEmptyState(): RestaurantState {
     inventoryTransactions: [],
     recoveryArchive: [],
     onlyViewMenuQr: false,
+    businessDayStartHour: DEFAULT_BUSINESS_DAY_START_HOUR,
   };
 }
 
@@ -244,6 +246,7 @@ export async function refreshStateFromServer() {
   if (configSnapshot.exists()) {
     next.onlyViewMenuQr = Boolean(configSnapshot.data().onlyViewMenuQr);
     next.dailyMenuChoiceGroups = configSnapshot.data().dailyMenuChoiceGroups || [];
+    next.businessDayStartHour = normalizeBusinessDayStartHour(configSnapshot.data().businessDayStartHour);
   }
   currentCachedState = next;
   publishState(next);
@@ -311,6 +314,7 @@ async function startFirestoreSubscriptions() {
   firestoreUnsubscribers.push(onSnapshot(doc(db, "config", "restaurant"), (snapshot) => {
     next.onlyViewMenuQr = Boolean(snapshot.data()?.onlyViewMenuQr);
     next.dailyMenuChoiceGroups = snapshot.data()?.dailyMenuChoiceGroups || [];
+    next.businessDayStartHour = normalizeBusinessDayStartHour(snapshot.data()?.businessDayStartHour);
     commit("config");
   }, (error) => {
     console.error("No se pudo leer la configuración", error);
@@ -515,11 +519,14 @@ async function updateState(mutator: (state: RestaurantState) => void): Promise<R
       // full set() rather than a merge.
       const configChanged =
         remoteBase.onlyViewMenuQr !== candidate.onlyViewMenuQr ||
+        normalizeBusinessDayStartHour(remoteBase.businessDayStartHour) !==
+          normalizeBusinessDayStartHour(candidate.businessDayStartHour) ||
         JSON.stringify(remoteBase.dailyMenuChoiceGroups || []) !==
           JSON.stringify(candidate.dailyMenuChoiceGroups || []);
       if (configChanged) {
         transaction.set(doc(db, "config", "restaurant"), {
           onlyViewMenuQr: Boolean(candidate.onlyViewMenuQr),
+          businessDayStartHour: normalizeBusinessDayStartHour(candidate.businessDayStartHour),
           dailyMenuChoiceGroups: JSON.parse(
             JSON.stringify(candidate.dailyMenuChoiceGroups || []),
           ),
@@ -2355,6 +2362,27 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
       return createResponse({ success: true, state: updated });
     }
 
+    // Update the hour at which one business day hands over to the next, so a
+    // night that runs late is still counted on the night it started.
+    if (path === "/api/admin/config/business-day-start" && method === "POST") {
+      const { businessDayStartHour, userName } = body;
+      const requested = Number(businessDayStartHour);
+      if (!Number.isInteger(requested) || requested < 0 || requested > 23) {
+        return createResponse({ error: "La hora de corte debe ser un número entero entre 0 y 23" }, 400);
+      }
+      const updated = await updateState(s => {
+        s.businessDayStartHour = requested;
+        if (!s.auditLogs) s.auditLogs = [];
+        s.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substring(2, 11),
+          action: "Ajuste de Sistema",
+          details: `Se cambió el inicio de la jornada a las ${requested}:00 por ${userName || "Administrador"}. Los reportes ahora cuentan de ${requested}:00 a ${requested}:00 del día siguiente.`,
+          createdAt: new Date().toISOString()
+        });
+      });
+      return createResponse({ success: true, state: updated });
+    }
+
     // 14. Shifts
     if (path === "/api/shifts/open" && method === "POST") {
       const { userId, initialCash } = body;
@@ -2479,6 +2507,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         (projected as any)[field] = cloneState(importedState)[field] || [];
       }
       projected.onlyViewMenuQr = Boolean(importedState.onlyViewMenuQr);
+      projected.businessDayStartHour = normalizeBusinessDayStartHour(importedState.businessDayStartHour);
       const projectedChanges = diffState(currentCachedState || createEmptyState(), projected);
       const projectedArchives = projectedChanges.filter(shouldArchiveChange).length;
       if (projectedChanges.length + projectedArchives > 450) {
@@ -2493,6 +2522,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           (s as any)[field] = cloneState(importedState)[field] || [];
         }
         s.onlyViewMenuQr = Boolean(importedState.onlyViewMenuQr);
+        s.businessDayStartHour = normalizeBusinessDayStartHour(importedState.businessDayStartHour);
         s.auditLogs = s.auditLogs || [];
         s.auditLogs.push({
           id: "audit_" + Math.random().toString(36).substring(2, 11),

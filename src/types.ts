@@ -316,4 +316,6 @@ export interface RestaurantState {
   recoveryArchive?: RecoveryRecord[];
   onlyViewMenuQr?: boolean;
   dailyMenuChoiceGroups?: DailyMenuChoiceGroup[];
+  /** Hour (0-23, local) at which one business day ends and the next begins. */
+  businessDayStartHour?: number;
 }

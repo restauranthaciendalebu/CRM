@@ -98,6 +98,12 @@ export function parseAndValidateBackup(payload: unknown): RestaurantState {
   ) {
     throw new Error("La configuración del menú QR no es válida.");
   }
+  if (rawState.businessDayStartHour !== undefined) {
+    const hour = rawState.businessDayStartHour;
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+      throw new Error("La hora de inicio de la jornada no es válida.");
+    }
+  }
 
   const state = clone(rawState) as RestaurantState;
   state.auditLogs = state.auditLogs || [];

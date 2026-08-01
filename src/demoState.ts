@@ -2216,6 +2216,7 @@ export const DEMO_STATE: RestaurantState = {
     }
   ],
   "onlyViewMenuQr": false,
+  "businessDayStartHour": 6,
   "notifications": [],
   "orders": [],
   "promotions": [

@@ -58,6 +58,14 @@ import {
   Camera,
   Check
 } from "lucide-react";
+import {
+  businessDayMidnight,
+  businessDayOf,
+  businessDayRange,
+  currentBusinessDay,
+  describeBusinessDay,
+  normalizeBusinessDayStartHour,
+} from "../businessDayUtils";
 import { searchUnsplashPhotos, trackUnsplashDownload, type UnsplashPhotoResult } from "../unsplashUtils";
 import { uploadProductImage } from "../imageUploadUtils";
 
@@ -163,8 +171,13 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [boletasStartDate, setBoletasStartDate] = useState<string>("");
   const [boletasEndDate, setBoletasEndDate] = useState<string>("");
 
+  // The restaurant's own cutoff between one day's takings and the next.
+  const businessDayStartHour = normalizeBusinessDayStartHour(state.businessDayStartHour);
+
   // Date filters for Reportes Analíticos
-  const [cierreDate, setCierreDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [cierreDate, setCierreDate] = useState<string>(() =>
+    currentBusinessDay(state.businessDayStartHour),
+  );
   const [cierreCounted, setCierreCounted] = useState(0);
   const [reportsPeriod, setReportsPeriod] = useState<string>("today"); // "today", "yesterday", "thisweek", "thismonth", "lastmonth", "custom"
   const [reportsStartDate, setReportsStartDate] = useState<string>("");
@@ -327,11 +340,14 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     if (!dateStr) return false;
     const date = new Date(dateStr);
     const now = new Date();
-    
-    // Set hours to 0 to compare full days
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const orderDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    
+
+    // Days are business days, not calendar days: a table closed at 01:00 still
+    // belongs to the night before. Both sides are reduced to the midnight of
+    // their business day, so the day arithmetic below is unchanged.
+    const today = businessDayMidnight(now, businessDayStartHour);
+    const orderDay = businessDayMidnight(date, businessDayStartHour);
+    if (Number.isNaN(orderDay.getTime())) return false;
+
     switch (period) {
       case "today": {
         return orderDay.getTime() === today.getTime();
@@ -355,23 +371,25 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
         // Start of this week (assume Monday)
         const day = today.getDay();
         const diff = today.getDate() - day + (day === 0 ? -6 : 1);
-        const startOfWeek = new Date(now.getFullYear(), now.getMonth(), diff);
+        const startOfWeek = new Date(today.getFullYear(), today.getMonth(), diff);
         return orderDay.getTime() >= startOfWeek.getTime();
       }
       case "thismonth": {
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
         return orderDay.getTime() >= startOfMonth.getTime();
       }
       case "lastmonth": {
-        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+        const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
         return orderDay.getTime() >= startOfLastMonth.getTime() && orderDay.getTime() <= endOfLastMonth.getTime();
       }
       case "custom": {
         if (!start) return true;
-        const startDate = new Date(start + "T00:00:00");
-        const endDate = end ? new Date(end + "T23:59:59") : new Date();
-        return date.getTime() >= startDate.getTime() && date.getTime() <= endDate.getTime();
+        // The picked dates name business days, so the window runs from the
+        // cutoff on the first to the cutoff after the last.
+        const startDate = businessDayRange(start, businessDayStartHour).start;
+        const endDate = end ? businessDayRange(end, businessDayStartHour).end : new Date();
+        return date.getTime() >= startDate.getTime() && date.getTime() < endDate.getTime();
       }
       case "all":
       default:
@@ -383,9 +401,10 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
     if (!dateStr) return false;
     const date = new Date(dateStr);
     const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const orderDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    
+    const today = businessDayMidnight(now, businessDayStartHour);
+    const orderDay = businessDayMidnight(date, businessDayStartHour);
+    if (Number.isNaN(orderDay.getTime())) return false;
+
     switch (period) {
       case "today": {
         // Previous period is yesterday
@@ -419,7 +438,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
         // Last week
         const day = today.getDay();
         const diff = today.getDate() - day + (day === 0 ? -6 : 1);
-        const startOfWeek = new Date(now.getFullYear(), now.getMonth(), diff);
+        const startOfWeek = new Date(today.getFullYear(), today.getMonth(), diff);
         const startOfLastWeek = new Date(startOfWeek);
         startOfLastWeek.setDate(startOfLastWeek.getDate() - 7);
         const endOfLastWeek = new Date(startOfWeek);
@@ -428,20 +447,20 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
       }
       case "thismonth": {
         // Last month
-        const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+        const startOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const endOfLastMonth = new Date(today.getFullYear(), today.getMonth(), 0);
         return orderDay.getTime() >= startOfLastMonth.getTime() && orderDay.getTime() <= endOfLastMonth.getTime();
       }
       case "lastmonth": {
         // Month before last
-        const startOfTwoMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-        const endOfTwoMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 1, 0);
+        const startOfTwoMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+        const endOfTwoMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 1, 0);
         return orderDay.getTime() >= startOfTwoMonthsAgo.getTime() && orderDay.getTime() <= endOfTwoMonthsAgo.getTime();
       }
       case "custom": {
         if (!start) return false;
-        const startDate = new Date(start + "T00:00:00");
-        const endDate = end ? new Date(end + "T23:59:59") : new Date();
+        const startDate = businessDayRange(start, businessDayStartHour).start;
+        const endDate = end ? businessDayRange(end, businessDayStartHour).end : new Date();
         const durationMs = endDate.getTime() - startDate.getTime();
         const startPrev = new Date(startDate.getTime() - durationMs - 1000);
         const endPrev = new Date(startDate.getTime() - 1000);
@@ -470,7 +489,10 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
 
   /* ─── Cierre de caja: one chosen day, independent of the reports period ─── */
   const cierre = (() => {
-    const sameDay = (iso?: string) => Boolean(iso) && String(iso).slice(0, 10) === cierreDate;
+    // Business day, not the UTC text: slicing the ISO string put the boundary
+    // at 20:00 local time, which counted each night's dinner on the next day.
+    const sameDay = (iso?: string) =>
+      Boolean(iso) && businessDayOf(String(iso), businessDayStartHour) === cierreDate;
 
     const dayPayments = completedPayments.filter((p) => sameDay(p.createdAt));
     const sumBy = (...methods: PaymentMethod[]) =>
@@ -535,8 +557,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const handlePrintCierre = () => {
     // The Z report is written against a shift window; the chosen day stands in
     // for one here, since this restaurant closes a single central till.
-    const dayStart = new Date(`${cierreDate}T00:00:00`);
-    const dayEnd = new Date(`${cierreDate}T23:59:59`);
+    const { start: dayStart, end: dayEnd } = businessDayRange(cierreDate, businessDayStartHour);
     printThermalZetaReport({
       shift: {
         id: `cierre_${cierreDate}`,
@@ -697,6 +718,27 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
       }
     } catch (e) {
       window.alert("Error de red al actualizar el recomendado.");
+    }
+  };
+
+  const handleBusinessDayStartChange = async (hour: number) => {
+    try {
+      const res = await fetch("/api/admin/config/business-day-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessDayStartHour: hour,
+          userName: activeUser?.name || "Administrador",
+        }),
+      });
+      if (res.ok) {
+        onRefreshState();
+      } else {
+        const err = await res.json();
+        window.alert(err.error || "No se pudo cambiar la hora de inicio de la jornada.");
+      }
+    } catch (e) {
+      window.alert("Error de red al cambiar la hora de inicio de la jornada.");
     }
   };
 
@@ -1742,13 +1784,33 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
                   <p className="text-xs text-zinc-500 mt-0.5">
                     Resumen del día para cuadrar el efectivo del cajón.
                   </p>
+                  <p className="text-[11px] text-zinc-400 mt-1">
+                    La jornada va de {describeBusinessDay(businessDayStartHour)}, así que una noche
+                    que se alarga se cuenta en el día que empezó.
+                  </p>
                 </div>
-                <input
-                  type="date"
-                  value={cierreDate}
-                  onChange={(e) => setCierreDate(e.target.value)}
-                  className="bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-xs font-bold text-zinc-800 focus:outline-none focus:border-amber-500"
-                />
+                <div className="flex flex-col items-start sm:items-end gap-2">
+                  <input
+                    type="date"
+                    value={cierreDate}
+                    onChange={(e) => setCierreDate(e.target.value)}
+                    className="bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-xs font-bold text-zinc-800 focus:outline-none focus:border-amber-500"
+                  />
+                  <label className="flex items-center gap-2 text-[11px] font-bold text-zinc-500">
+                    La jornada empieza a las
+                    <select
+                      value={businessDayStartHour}
+                      onChange={(e) => handleBusinessDayStartChange(Number(e.target.value))}
+                      className="bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1 text-[11px] font-bold text-zinc-800 focus:outline-none focus:border-amber-500"
+                    >
+                      {Array.from({ length: 24 }, (_, hour) => (
+                        <option key={hour} value={hour}>
+                          {String(hour).padStart(2, "0")}:00
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
               </div>
 
               {/* Cash reconciliation — the number that actually catches problems */}
