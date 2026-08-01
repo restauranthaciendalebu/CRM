@@ -149,6 +149,16 @@ export interface OrderItem {
   tanda?: number; // e.g., 1 for starters, 2 for main courses
 }
 
+// Where a delivery order is going, and what the courier run costs. Present
+// only on orders taken in the delivery zone.
+export interface DeliveryInfo {
+  name: string;
+  address: string;
+  phone: string;
+  /** Courier charge, keyed in per order — it varies with distance. */
+  fee: number;
+}
+
 export interface Order {
   id: string;
   tableId: string;
@@ -162,12 +172,20 @@ export interface Order {
   billingSubtotal?: number;
   billingDiscount?: number;
   billingTip?: number;
+  /** Delivery fee as charged, frozen at billing time alongside the rest. */
+  billingDeliveryFee?: number;
   billingTotal?: number;
   voided?: boolean;
   items: OrderItem[];
   customerPhone?: string; // linked customer if registered/found
   customerUid?: string; // anonymous Firebase session used by QR orders
+  delivery?: DeliveryInfo;
 }
+
+// Delivery orders reuse the whole table flow — kitchen ticket, billing,
+// receipt — by living in their own zone as virtual "tables". Matching on the
+// zone keeps them out of the dining-room seat count and layout.
+export const DELIVERY_ZONE = "Delivery";
 
 export interface Customer {
   id: string;

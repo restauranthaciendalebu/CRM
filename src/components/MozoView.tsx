@@ -14,6 +14,7 @@ import {
   SelectedItemModifier,
   Reservation,
   DAILY_MENU_CATEGORY_ID,
+  DELIVERY_ZONE,
   ReservationStatus,
   Role
 } from "../types";
@@ -134,6 +135,13 @@ export default function MozoView({
   const [releasingTable, setReleasingTable] = useState<Table | null>(null);
   const [isReleasingTable, setIsReleasingTable] = useState(false);
   const [isFinalizingPaidTable, setIsFinalizingPaidTable] = useState(false);
+  const [deliveryName, setDeliveryName] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryPhone, setDeliveryPhone] = useState("");
+  const [deliveryFee, setDeliveryFee] = useState(0);
+  const [isEditingDelivery, setIsEditingDelivery] = useState(false);
+  const [isSavingDelivery, setIsSavingDelivery] = useState(false);
+  const [isSettingUpDelivery, setIsSettingUpDelivery] = useState(false);
   const [isUpdatingGuestCount, setIsUpdatingGuestCount] = useState(false);
 
   // Billing modal
@@ -361,6 +369,12 @@ export default function MozoView({
     if (!selectedTable) return;
     const tableId = selectedTable.id;
     const guests = Number(openingGuestCount) || 2;
+    const isDelivery = selectedTable.zone === DELIVERY_ZONE;
+
+    if (isDelivery && !deliveryAddress.trim()) {
+      showBanner("Ingresa la dirección de entrega.", "error");
+      return;
+    }
 
     setIsOpeningTable(false);
 
@@ -368,14 +382,25 @@ export default function MozoView({
       const res = await fetch(`/api/tables/${tableId}/open`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          customerCount: guests,
-          waiterId: activeUser?.id
+        body: JSON.stringify({
+          customerCount: isDelivery ? 1 : guests,
+          waiterId: activeUser?.id,
+          ...(isDelivery ? {
+            delivery: {
+              name: deliveryName.trim(),
+              address: deliveryAddress.trim(),
+              phone: deliveryPhone.trim(),
+              fee: deliveryFee,
+            },
+          } : {}),
         })
       });
       if (res.ok) {
         setSelectedTable({ ...selectedTable, status: TableStatus.OCCUPIED });
-        showBanner(`Mesa abierta con éxito para ${guests} personas.`);
+        showBanner(isDelivery
+          ? `Delivery tomado para ${deliveryAddress.trim()}.`
+          : `Mesa abierta con éxito para ${guests} personas.`);
+        resetDeliveryForm();
         refreshStateIfNeeded();
       } else {
         const err = await res.json().catch(() => ({}));
@@ -383,6 +408,69 @@ export default function MozoView({
       }
     } catch {
       showBanner("Error de conexión al abrir la mesa.", "error");
+    }
+  };
+
+  const resetDeliveryForm = () => {
+    setDeliveryName("");
+    setDeliveryAddress("");
+    setDeliveryPhone("");
+    setDeliveryFee(0);
+  };
+
+  const handleSaveDeliveryChanges = async () => {
+    if (!activeOrder || isSavingDelivery) return;
+    if (!deliveryAddress.trim()) {
+      showBanner("La dirección no puede quedar vacía.", "error");
+      return;
+    }
+    setIsSavingDelivery(true);
+    try {
+      const res = await fetch(`/api/orders/${activeOrder.id}/delivery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: deliveryName.trim(),
+          address: deliveryAddress.trim(),
+          phone: deliveryPhone.trim(),
+          fee: deliveryFee,
+        }),
+      });
+      if (res.ok) {
+        setIsEditingDelivery(false);
+        showBanner("Datos de entrega actualizados.");
+        refreshStateIfNeeded();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showBanner(err.error || "No se pudieron guardar los datos.", "error");
+      }
+    } catch {
+      showBanner("Error de conexión al guardar los datos.", "error");
+    } finally {
+      setIsSavingDelivery(false);
+    }
+  };
+
+  const handleSetupDelivery = async () => {
+    if (isSettingUpDelivery) return;
+    setIsSettingUpDelivery(true);
+    try {
+      const res = await fetch("/api/admin/delivery/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slots: 12, operatorName: activeUser?.name || "Garzón" }),
+      });
+      if (res.ok) {
+        showBanner("Delivery habilitado. Ya aparece como zona en el mapa.");
+        refreshStateIfNeeded();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showBanner(err.error || "No se pudo habilitar el delivery.", "error");
+      }
+    } catch {
+      showBanner("Error de conexión al habilitar el delivery.", "error");
+    } finally {
+      setIsSettingUpDelivery(false);
     }
   };
 
@@ -1050,10 +1138,18 @@ export default function MozoView({
     }, 0);
   };
 
+  // Delivery orders: the courier charge joins the total, and no tip is
+  // suggested — the restaurant doesn't take one on deliveries.
+  const isDeliveryOrder = Boolean(billingOrder?.delivery);
+  const billingDeliveryFee = billingOrder?.billingDeliveryFee
+    ?? Math.max(0, Math.round(Number(billingOrder?.delivery?.fee) || 0));
+
   const billingSubtotal = billingOrder?.billingSubtotal ?? calculateActiveOrderTotal();
   const billingDiscountAmount = billingOrder?.billingDiscount ?? Math.round(billingSubtotal * (appliedDiscount / 100));
-  const billingTipAmount = billingOrder?.billingTip ?? Math.round(billingSubtotal * (tipPercent / 100));
-  const billingAccountTotal = billingOrder?.billingTotal ?? billingSubtotal - billingDiscountAmount + billingTipAmount;
+  const billingTipAmount = billingOrder?.billingTip
+    ?? (isDeliveryOrder ? 0 : Math.round(billingSubtotal * (tipPercent / 100)));
+  const billingAccountTotal = billingOrder?.billingTotal
+    ?? billingSubtotal - billingDiscountAmount + billingTipAmount + billingDeliveryFee;
   const billingRemaining = getRemainingBalance(billingAccountTotal, activeOrderPaid);
   const billingTermsLocked = activeOrderPayments.length > 0;
   const nextBillingPaymentAmount = getNextPaymentAmount(
@@ -1483,6 +1579,16 @@ export default function MozoView({
               </button>
             );
           })}
+          {!zones.includes(DELIVERY_ZONE) && (
+            <button
+              onClick={handleSetupDelivery}
+              disabled={isSettingUpDelivery}
+              title="Crea los espacios de delivery para tomar pedidos a domicilio"
+              className="px-4 py-2 rounded-lg font-bold text-xs text-blue-700 hover:bg-white/60 disabled:opacity-60 cursor-pointer"
+            >
+              {isSettingUpDelivery ? "Habilitando..." : "+ Habilitar Delivery"}
+            </button>
+          )}
         </div>
 
         {/* TABLES GRID (BENTO BOX MAP STYLE) */}
@@ -1798,6 +1904,67 @@ export default function MozoView({
                       animate={{ opacity: 1, y: 0 }}
                       className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 mt-1 text-left space-y-3"
                     >
+                      {selectedTable.zone === DELIVERY_ZONE ? (
+                        <>
+                          <span className="font-bold text-xs text-zinc-900 block">Datos de la entrega</span>
+                          <div>
+                            <label className="text-[10px] font-black text-zinc-400 block uppercase mb-1">Dirección *</label>
+                            <input
+                              type="text"
+                              value={deliveryAddress}
+                              onChange={(e) => setDeliveryAddress(e.target.value)}
+                              placeholder="Calle, número, depto, referencia"
+                              className="w-full bg-white border border-zinc-200 rounded-lg px-2.5 py-2 text-xs text-zinc-900 focus:outline-none focus:border-amber-500"
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="text-[10px] font-black text-zinc-400 block uppercase mb-1">Nombre</label>
+                              <input
+                                type="text"
+                                value={deliveryName}
+                                onChange={(e) => setDeliveryName(e.target.value)}
+                                placeholder="Quién recibe"
+                                className="w-full bg-white border border-zinc-200 rounded-lg px-2.5 py-2 text-xs text-zinc-900 focus:outline-none focus:border-amber-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-black text-zinc-400 block uppercase mb-1">Teléfono</label>
+                              <input
+                                type="tel"
+                                value={deliveryPhone}
+                                onChange={(e) => setDeliveryPhone(e.target.value)}
+                                placeholder="+56 9 ..."
+                                className="w-full bg-white border border-zinc-200 rounded-lg px-2.5 py-2 text-xs text-zinc-900 focus:outline-none focus:border-amber-500"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-[10px] font-black text-zinc-400 block uppercase mb-1">Costo de reparto</label>
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-bold">$</span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={deliveryFee || ""}
+                                onChange={(e) => setDeliveryFee(Math.max(0, Number(e.target.value) || 0))}
+                                placeholder="0"
+                                className="w-full bg-white border border-zinc-200 rounded-lg pl-6 pr-2.5 py-2 text-xs font-bold text-zinc-900 focus:outline-none focus:border-amber-500"
+                              />
+                            </div>
+                            <p className="text-[9px] text-zinc-400 mt-1">
+                              Se suma al total al cobrar. Puedes ajustarlo después si cambia.
+                            </p>
+                          </div>
+                          <button
+                            onClick={handleOpenTableSubmit}
+                            className="w-full bg-amber-500 hover:bg-amber-600 text-zinc-950 font-black py-2.5 rounded-xl text-xs transition-colors cursor-pointer"
+                          >
+                            Tomar Delivery
+                          </button>
+                        </>
+                      ) : (
+                        <>
                       <span className="font-bold text-xs text-zinc-900 block">Configurar Mesa</span>
                       <div>
                         <label className="text-[10px] font-black text-zinc-400 block uppercase">Cantidad de comensales</label>
@@ -1823,6 +1990,8 @@ export default function MozoView({
                       >
                         Abrir Mesa Ahora
                       </button>
+                        </>
+                      )}
                     </motion.div>
                   )}
 
@@ -2144,6 +2313,105 @@ export default function MozoView({
                       </div>
                     </div>
                   </div>
+
+                  {/* DELIVERY DESTINATION AND COURIER CHARGE */}
+                  {activeOrder?.delivery && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-2xl p-3 text-xs space-y-1.5">
+                      {!isEditingDelivery ? (
+                        <>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <span className="text-[10px] font-black uppercase tracking-wide text-blue-800 block">
+                                Entregar en
+                              </span>
+                              <span className="font-bold text-zinc-900 block">{activeOrder.delivery.address}</span>
+                              {(activeOrder.delivery.name || activeOrder.delivery.phone) && (
+                                <span className="text-zinc-600 block mt-0.5">
+                                  {[activeOrder.delivery.name, activeOrder.delivery.phone].filter(Boolean).join(" · ")}
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => {
+                                setDeliveryName(activeOrder.delivery?.name || "");
+                                setDeliveryAddress(activeOrder.delivery?.address || "");
+                                setDeliveryPhone(activeOrder.delivery?.phone || "");
+                                setDeliveryFee(activeOrder.delivery?.fee || 0);
+                                setIsEditingDelivery(true);
+                              }}
+                              className="shrink-0 bg-white border border-blue-200 hover:bg-blue-100 text-blue-800 font-bold px-2 py-1 rounded-lg text-[10px] cursor-pointer"
+                            >
+                              Editar
+                            </button>
+                          </div>
+                          <div className="flex justify-between border-t border-blue-200/70 pt-1.5">
+                            <span className="text-blue-900 font-bold">Costo de reparto</span>
+                            <span className="font-black text-zinc-900">{formatCLP(activeOrder.delivery.fee)}</span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-black uppercase tracking-wide text-blue-800 block">
+                            Editar entrega
+                          </span>
+                          <input
+                            type="text"
+                            value={deliveryAddress}
+                            onChange={(e) => setDeliveryAddress(e.target.value)}
+                            placeholder="Dirección"
+                            className="w-full bg-white border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-zinc-900 focus:outline-none focus:border-blue-500"
+                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <input
+                              type="text"
+                              value={deliveryName}
+                              onChange={(e) => setDeliveryName(e.target.value)}
+                              placeholder="Nombre"
+                              className="w-full bg-white border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-zinc-900 focus:outline-none focus:border-blue-500"
+                            />
+                            <input
+                              type="tel"
+                              value={deliveryPhone}
+                              onChange={(e) => setDeliveryPhone(e.target.value)}
+                              placeholder="Teléfono"
+                              className="w-full bg-white border border-blue-200 rounded-lg px-2 py-1.5 text-xs text-zinc-900 focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          <div className="relative">
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400 font-bold">$</span>
+                            <input
+                              type="number"
+                              min="0"
+                              value={deliveryFee || ""}
+                              onChange={(e) => setDeliveryFee(Math.max(0, Number(e.target.value) || 0))}
+                              placeholder="Costo de reparto"
+                              className="w-full bg-white border border-blue-200 rounded-lg pl-5 pr-2 py-1.5 text-xs font-bold text-zinc-900 focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          {activeOrderHasPayments && (
+                            <p className="text-[10px] text-amber-700 font-semibold">
+                              Esta cuenta ya tiene pagos: el total no cambiará aunque ajustes el costo.
+                            </p>
+                          )}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setIsEditingDelivery(false)}
+                              className="flex-1 bg-white border border-blue-200 hover:bg-blue-100 text-blue-800 font-bold py-1.5 rounded-lg text-[11px] cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              onClick={handleSaveDeliveryChanges}
+                              disabled={isSavingDelivery}
+                              className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-bold py-1.5 rounded-lg text-[11px] cursor-pointer"
+                            >
+                              {isSavingDelivery ? "Guardando..." : "Guardar"}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* PRODUCTS LIST (Expands to fill tablet screen without premature scrolling) */}
                   <div className="space-y-2">
@@ -2809,10 +3077,19 @@ export default function MozoView({
                         </div>
                       )}
 
-                      <div className="flex justify-between">
-                        <span className="text-zinc-500 font-bold">Propina sugerida</span>
-                        <span className="text-zinc-900 font-extrabold">{formatCLP(billingTipAmount)}</span>
-                      </div>
+                      {billingDeliveryFee > 0 && (
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500 font-bold">Costo de reparto</span>
+                          <span className="text-zinc-900 font-extrabold">{formatCLP(billingDeliveryFee)}</span>
+                        </div>
+                      )}
+
+                      {!isDeliveryOrder && (
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500 font-bold">Propina sugerida</span>
+                          <span className="text-zinc-900 font-extrabold">{formatCLP(billingTipAmount)}</span>
+                        </div>
+                      )}
 
                       <div className="border-t border-zinc-200/50 pt-2 flex justify-between font-black text-sm text-zinc-950">
                         <span>Total cuenta</span>
@@ -2911,8 +3188,8 @@ export default function MozoView({
                       )}
                     </div>
 
-                    {/* Tip configurations */}
-                    <div className="space-y-1.5">
+                    {/* Tip configurations — not offered on deliveries */}
+                    <div className={`space-y-1.5 ${isDeliveryOrder ? "hidden" : ""}`}>
                       <span className="text-[10px] font-black uppercase text-zinc-400 block tracking-wider">
                         Propina Mozo {billingTermsLocked ? "(definida en el primer pago)" : "(10% sugerido)"}
                       </span>

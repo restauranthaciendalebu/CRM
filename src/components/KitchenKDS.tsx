@@ -4,7 +4,8 @@ import {
   Order, 
   OrderItem, 
   OrderItemStatus, 
-  OrderStatus 
+  OrderStatus,
+  DELIVERY_ZONE
 } from "../types";
 import { 
   Clock, 
@@ -273,6 +274,11 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
     return table ? table.number : "?";
   };
 
+  // Deliveries get packed rather than plated, so the ticket has to say so
+  // instead of reading like any other table.
+  const isDeliveryTable = (tableId: string) =>
+    state.tables.find((t) => t.id === tableId)?.zone === DELIVERY_ZONE;
+
   const getWaiterName = (waiterId?: string) => {
     if (!waiterId) return "Cliente (QR)";
     const waiter = state.users.find((u) => u.id === waiterId);
@@ -397,10 +403,23 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                     : "bg-zinc-800/50"
                 }`}>
                   <div className="min-w-0">
-                    <h3 className="font-extrabold text-base text-white leading-tight">Mesa {getTableNumber(order.tableId)}</h3>
-                    <span className="text-[9px] text-zinc-400 font-bold block truncate">
-                      {getWaiterName(order.waiterId)} · {order.customerCount} com.
-                    </span>
+                    {isDeliveryTable(order.tableId) ? (
+                      <>
+                        <h3 className="font-extrabold text-base text-blue-300 leading-tight">
+                          🛵 DELIVERY {getTableNumber(order.tableId)}
+                        </h3>
+                        <span className="text-[9px] text-blue-200/70 font-bold block truncate">
+                          Para llevar · {getWaiterName(order.waiterId)}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="font-extrabold text-base text-white leading-tight">Mesa {getTableNumber(order.tableId)}</h3>
+                        <span className="text-[9px] text-zinc-400 font-bold block truncate">
+                          {getWaiterName(order.waiterId)} · {order.customerCount} com.
+                        </span>
+                      </>
+                    )}
                   </div>
 
                   {/* TIMER BADGE */}

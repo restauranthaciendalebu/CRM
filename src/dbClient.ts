@@ -33,7 +33,9 @@ import {
   Table,
   Customer,
   Product,
+  DeliveryInfo,
   DAILY_MENU_CATEGORY_ID,
+  DELIVERY_ZONE,
   User,
   RecoveryRecord,
   RecoverableCollection,
@@ -841,7 +843,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     const tableOpenMatch = path.match(/^\/api\/tables\/([^\/]+)\/open$/);
     if (tableOpenMatch && method === "POST") {
       const id = tableOpenMatch[1];
-      const { customerCount, waiterId } = body;
+      const { customerCount, waiterId, delivery } = body;
 
       let errorMsg = "";
       let targetOrder: Order | null = null;
@@ -851,6 +853,22 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         if (!table) {
           errorMsg = "Mesa no encontrada";
           return;
+        }
+
+        const isDelivery = table.zone === DELIVERY_ZONE;
+        let deliveryInfo: DeliveryInfo | undefined;
+        if (isDelivery) {
+          const address = String(delivery?.address || "").trim();
+          if (!address) {
+            errorMsg = "Ingresa la dirección de entrega.";
+            return;
+          }
+          deliveryInfo = {
+            name: String(delivery?.name || "").trim(),
+            address,
+            phone: String(delivery?.phone || "").trim(),
+            fee: Math.max(0, Math.round(Number(delivery?.fee) || 0)),
+          };
         }
 
         table.status = TableStatus.OCCUPIED;
@@ -870,12 +888,14 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
             customerCount: guests,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
-            items: []
+            items: [],
+            ...(deliveryInfo ? { delivery: deliveryInfo } : {}),
           };
           s.orders.push(existingOrder);
         } else {
           existingOrder.customerCount = guests;
           if (waiterId) existingOrder.waiterId = waiterId;
+          if (deliveryInfo) existingOrder.delivery = deliveryInfo;
         }
         targetOrder = existingOrder;
 
@@ -883,8 +903,10 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           id: "audit_" + Math.random().toString(36).substring(2, 11),
           userId: waiterId || undefined,
           userName: waiterName,
-          action: "Mesa Abierta",
-          details: `${waiterName} abrió la Mesa ${table.number} para ${guests} personas.`,
+          action: isDelivery ? "Delivery Abierto" : "Mesa Abierta",
+          details: isDelivery
+            ? `${waiterName} tomó el Delivery ${table.number} para ${deliveryInfo?.address}.`
+            : `${waiterName} abrió la Mesa ${table.number} para ${guests} personas.`,
           createdAt: new Date().toISOString()
         });
       });
@@ -893,6 +915,72 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         return createResponse({ error: errorMsg }, 400);
       }
       return createResponse({ success: true, order: targetOrder, state: updated });
+    }
+
+    // Update a delivery's destination or courier charge. The fee in
+    // particular is often only settled once the address is confirmed.
+    const deliveryUpdateMatch = path.match(/^\/api\/orders\/([^\/]+)\/delivery$/);
+    if (deliveryUpdateMatch && method === "POST") {
+      const id = deliveryUpdateMatch[1];
+      const { name, address, phone, fee } = body;
+      let errorMsg = "";
+
+      await updateState(s => {
+        const order = s.orders.find(o => o.id === id);
+        if (!order) {
+          errorMsg = "Pedido no encontrado";
+          return;
+        }
+        if (order.status === OrderStatus.CLOSED) {
+          errorMsg = "Este pedido ya está cerrado.";
+          return;
+        }
+        const cleanAddress = String(address ?? order.delivery?.address ?? "").trim();
+        if (!cleanAddress) {
+          errorMsg = "La dirección de entrega no puede quedar vacía.";
+          return;
+        }
+        order.delivery = {
+          name: String(name ?? order.delivery?.name ?? "").trim(),
+          address: cleanAddress,
+          phone: String(phone ?? order.delivery?.phone ?? "").trim(),
+          fee: Math.max(0, Math.round(Number(fee ?? order.delivery?.fee) || 0)),
+        };
+        order.updatedAt = new Date().toISOString();
+      });
+
+      if (errorMsg) {
+        return createResponse({ error: errorMsg }, 400);
+      }
+      return createResponse({ success: true });
+    }
+
+    // One-time setup: create the delivery slots. There is no table editor for
+    // zones, so the waiter screen offers this when the zone doesn't exist yet.
+    if (path === "/api/admin/delivery/setup" && method === "POST") {
+      const { slots, operatorName } = body;
+      const wanted = Math.min(30, Math.max(1, Math.round(Number(slots) || 12)));
+      let created = 0;
+
+      await updateState(s => {
+        const existing = s.tables.filter(t => t.zone === DELIVERY_ZONE).length;
+        for (let i = existing; i < wanted; i++) {
+          const newTable = createTable(s.tables, DELIVERY_ZONE, 1);
+          s.tables.push(newTable);
+          created++;
+        }
+        if (created > 0) {
+          if (!s.auditLogs) s.auditLogs = [];
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Delivery Habilitado",
+            details: `${operatorName || "Personal"} habilitó ${created} espacio(s) de delivery.`,
+            createdAt: new Date().toISOString(),
+          });
+        }
+      });
+
+      return createResponse({ success: true, created });
     }
 
     // Free a table opened by mistake, or where the party left before ordering.
@@ -1447,7 +1535,10 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         const proposedSubtotal = Math.max(0, Math.round(Number(totalAmount) || 0));
         const proposedDiscount = Math.max(0, Math.round(Number(discount) || 0));
         const proposedTip = Math.max(0, Math.round(Number(tip) || 0));
-        const proposedBillingTotal = proposedSubtotal - proposedDiscount + proposedTip;
+        // The courier charge rides on the order rather than the request, so a
+        // client that predates delivery can't accidentally drop or invent it.
+        const deliveryFee = Math.max(0, Math.round(Number(order.delivery?.fee) || 0));
+        const proposedBillingTotal = proposedSubtotal - proposedDiscount + proposedTip + deliveryFee;
         const billingTotal = order.billingTotal ?? proposedBillingTotal;
         const alreadyPaid = s.payments
           .filter(payment => payment.orderId === id)
@@ -1510,6 +1601,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           order.billingSubtotal = proposedSubtotal;
           order.billingDiscount = proposedDiscount;
           order.billingTip = proposedTip;
+          if (deliveryFee > 0) order.billingDeliveryFee = deliveryFee;
           order.billingTotal = proposedBillingTotal;
         }
 

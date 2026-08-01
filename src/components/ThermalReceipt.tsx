@@ -85,6 +85,9 @@ export function printThermalReceipt({
   const fullDiscount = accountDiscount ?? totalDiscount;
   const fullTip = accountTip ?? totalTip;
   const fullAccountTotal = accountTotal ?? totalPaid;
+  // Frozen at billing time when present, so a later change to the courier
+  // charge can't rewrite a receipt that was already handed over.
+  const deliveryFee = order.billingDeliveryFee ?? order.delivery?.fee ?? 0;
   const isPartialReceipt = previouslyPaid > 0 || remainingBalance > 0 || totalPaid < fullAccountTotal;
 
   const paymentMethodLabel = (method: PaymentMethod) => {
@@ -217,7 +220,11 @@ export function printThermalReceipt({
   <div class="info-row"><span>Fecha</span><span>${dateStr}  ${timeStr}</span></div>
   <div class="info-row"><span>Mesa</span><span class="bold">${tableName}</span></div>
   ${waiterName ? `<div class="info-row"><span>Garzón</span><span>${waiterName}</span></div>` : ""}
-  <div class="info-row"><span>Comensales</span><span>${order.customerCount}</span></div>
+  ${order.delivery ? `
+  <div class="info-row"><span>Entregar en</span><span class="bold">${order.delivery.address}</span></div>
+  ${order.delivery.name ? `<div class="info-row"><span>Recibe</span><span>${order.delivery.name}</span></div>` : ""}
+  ${order.delivery.phone ? `<div class="info-row"><span>Teléfono</span><span>${order.delivery.phone}</span></div>` : ""}
+  ` : `<div class="info-row"><span>Comensales</span><span>${order.customerCount}</span></div>`}
 
   <hr class="sep" />
 
@@ -235,6 +242,7 @@ export function printThermalReceipt({
     <tr><td>Consumo total</td><td class="item-price">$${fullSubtotal.toLocaleString("es-CL")}</td></tr>
     ${fullDiscount > 0 ? `<tr><td>Descuento cuenta</td><td class="item-price" style="color:#c00">-$${fullDiscount.toLocaleString("es-CL")}</td></tr>` : ""}
     ${fullTip > 0 ? `<tr><td>Propina cuenta</td><td class="item-price">$${fullTip.toLocaleString("es-CL")}</td></tr>` : ""}
+    ${deliveryFee > 0 ? `<tr><td>Costo de reparto</td><td class="item-price">$${deliveryFee.toLocaleString("es-CL")}</td></tr>` : ""}
     ${isPartialReceipt ? `<tr><td>Total cuenta</td><td class="item-price">$${fullAccountTotal.toLocaleString("es-CL")}</td></tr>` : ""}
     ${previouslyPaid > 0 ? `<tr><td>Pagado anteriormente</td><td class="item-price">$${previouslyPaid.toLocaleString("es-CL")}</td></tr>` : ""}
   </table>
