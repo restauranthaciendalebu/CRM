@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import QRGenerator from "./QRGenerator";
 import AddTableModal from "./AddTableModal";
-import { printThermalReceipt } from "./ThermalReceipt";
+import { printThermalReceipt, printThermalZetaReport } from "./ThermalReceipt";
 import { 
   RestaurantState, 
   Product, 
@@ -15,6 +15,7 @@ import {
   User,
   Role,
   RecoveryRecord,
+  ShiftStatus,
   DAILY_MENU_CATEGORY_ID
 } from "../types";
 import {
@@ -84,6 +85,7 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
 
   const visibleTabs = [
     { id: "reports", name: "📈 Reportes Analíticos", perm: "view_reports" },
+    { id: "cierre", name: "💰 Cierre de Caja", perm: "view_reports" },
     { id: "boletas", name: "🧾 Historial de Boletas", perm: "view_reports" },
     { id: "menu", name: "🍔 Carta & Precios", perm: "manage_menu" },
     { id: "crm", name: "👥 CRM & Fidelidad", perm: "view_reports" },
@@ -162,6 +164,8 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const [boletasEndDate, setBoletasEndDate] = useState<string>("");
 
   // Date filters for Reportes Analíticos
+  const [cierreDate, setCierreDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  const [cierreCounted, setCierreCounted] = useState(0);
   const [reportsPeriod, setReportsPeriod] = useState<string>("today"); // "today", "yesterday", "thisweek", "thismonth", "lastmonth", "custom"
   const [reportsStartDate, setReportsStartDate] = useState<string>("");
   const [reportsEndDate, setReportsEndDate] = useState<string>("");
@@ -463,6 +467,90 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
   const totalOrdersCount = currentOrders.length;
   const closedOrdersCount = currentClosedOrders.length;
   const averageTicket = closedOrdersCount > 0 ? Math.round(totalSalesVolume / closedOrdersCount) : 0;
+
+  /* ─── Cierre de caja: one chosen day, independent of the reports period ─── */
+  const cierre = (() => {
+    const sameDay = (iso?: string) => Boolean(iso) && String(iso).slice(0, 10) === cierreDate;
+
+    const dayPayments = completedPayments.filter((p) => sameDay(p.createdAt));
+    const sumBy = (...methods: PaymentMethod[]) =>
+      dayPayments.filter((p) => methods.includes(p.method)).reduce((sum, p) => sum + p.amount, 0);
+
+    const cash = sumBy(PaymentMethod.CASH);
+    const byMethod = [
+      { label: "Efectivo", amount: cash },
+      { label: "Débito", amount: sumBy(PaymentMethod.DEBIT) },
+      { label: "Crédito", amount: sumBy(PaymentMethod.CREDIT) },
+      { label: "Transferencia", amount: sumBy(PaymentMethod.TRANSFER) },
+      { label: "Cuenta autorizada (fiado)", amount: sumBy(PaymentMethod.ACCOUNT) },
+    ];
+
+    const total = dayPayments.reduce((sum, p) => sum + p.amount, 0);
+    const tips = dayPayments.reduce((sum, p) => sum + (p.tip || 0), 0);
+
+    const dayOrders = allOrders.filter((o) => sameDay(o.updatedAt));
+    const closedOrders = dayOrders.filter((o) => o.status === "CLOSED" && !o.voided);
+    const closedCount = closedOrders.length;
+
+    // Money-side average, so a table paid in parts still counts once.
+    const nonAccountTotal = dayPayments
+      .filter((p) => p.method !== PaymentMethod.ACCOUNT)
+      .reduce((sum, p) => sum + p.amount, 0);
+
+    const voided = dayOrders.filter((o) => o.voided);
+    const emptyReleased = voided.filter((o) => o.items.length === 0);
+    const voidedWithItems = voided.filter((o) => o.items.length > 0);
+    const discounted = closedOrders.filter((o) => (o.billingDiscount || 0) > 0);
+
+    const alerts: string[] = [];
+    if (voidedWithItems.length > 0) {
+      alerts.push(`${voidedWithItems.length} pedido(s) con consumo fueron anulados.`);
+    }
+    if (emptyReleased.length > 0) {
+      alerts.push(`${emptyReleased.length} mesa(s) se liberaron sin consumo.`);
+    }
+    if (discounted.length > 0) {
+      const totalDiscount = discounted.reduce((sum, o) => sum + (o.billingDiscount || 0), 0);
+      alerts.push(`${discounted.length} cuenta(s) con descuento, por ${formatCLP(totalDiscount)} en total.`);
+    }
+    const accountTotal = sumBy(PaymentMethod.ACCOUNT);
+    if (accountTotal > 0) {
+      alerts.push(`${formatCLP(accountTotal)} quedó fiado en cuentas autorizadas (no entró en caja).`);
+    }
+
+    return {
+      cash,
+      byMethod,
+      total,
+      tips,
+      closedCount,
+      averageTicket: closedCount > 0 ? Math.round(nonAccountTotal / closedCount) : 0,
+      alerts,
+      dayPayments,
+    };
+  })();
+
+  const cierreDifference = cierreCounted - cierre.cash;
+
+  const handlePrintCierre = () => {
+    // The Z report is written against a shift window; the chosen day stands in
+    // for one here, since this restaurant closes a single central till.
+    const dayStart = new Date(`${cierreDate}T00:00:00`);
+    const dayEnd = new Date(`${cierreDate}T23:59:59`);
+    printThermalZetaReport({
+      shift: {
+        id: `cierre_${cierreDate}`,
+        userId: activeUser?.id || "",
+        openedAt: dayStart.toISOString(),
+        closedAt: dayEnd.toISOString(),
+        initialCash: 0,
+        finalCash: cierreCounted,
+        status: ShiftStatus.CLOSED,
+      },
+      operatorName: activeUser?.name || "Administración",
+      payments: cierre.dayPayments,
+    });
+  };
 
   // Filter previous period
   const prevPayments = completedPayments.filter(p => isDateInPreviousPeriod(p.createdAt, reportsPeriod, reportsStartDate, reportsEndDate));
@@ -1641,6 +1729,150 @@ export default function AdminView({ state, onRefreshState, activeUser }: AdminVi
               </div>
             </div>
 
+          </div>
+        )}
+
+        {/* TAB: CIERRE DE CAJA */}
+        {activeTab === "cierre" && (
+          <div className="space-y-5" id="admin-cierre-tab">
+            <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-100 pb-4">
+                <div className="text-left">
+                  <h3 className="font-extrabold text-zinc-950 text-base">Cierre de Caja</h3>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    Resumen del día para cuadrar el efectivo del cajón.
+                  </p>
+                </div>
+                <input
+                  type="date"
+                  value={cierreDate}
+                  onChange={(e) => setCierreDate(e.target.value)}
+                  className="bg-zinc-50 border border-zinc-200 rounded-xl px-3 py-2 text-xs font-bold text-zinc-800 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              {/* Cash reconciliation — the number that actually catches problems */}
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                  <span className="text-[10px] font-black uppercase tracking-wide text-zinc-500 block">
+                    Efectivo esperado
+                  </span>
+                  <span className="text-lg font-black text-zinc-900">{formatCLP(cierre.cash)}</span>
+                  <span className="block text-[10px] text-zinc-400 mt-0.5">
+                    Solo ventas en efectivo. No incluye el fondo inicial.
+                  </span>
+                </div>
+
+                <div className="rounded-xl border border-zinc-200 bg-white p-3">
+                  <label className="text-[10px] font-black uppercase tracking-wide text-zinc-500 block">
+                    Efectivo contado
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Escribe lo que contaste"
+                    value={cierreCounted || ""}
+                    onChange={(e) => setCierreCounted(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full mt-1 bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1.5 text-base font-black text-zinc-900 focus:outline-none focus:border-amber-500"
+                  />
+                  <span className="block text-[10px] text-zinc-400 mt-0.5">
+                    Descuenta el fondo inicial antes de escribirlo.
+                  </span>
+                </div>
+
+                <div className={`rounded-xl border p-3 ${
+                  cierreCounted === 0
+                    ? "border-zinc-200 bg-zinc-50"
+                    : cierreDifference === 0
+                    ? "border-emerald-300 bg-emerald-50"
+                    : "border-red-300 bg-red-50"
+                }`}>
+                  <span className="text-[10px] font-black uppercase tracking-wide text-zinc-500 block">
+                    Diferencia
+                  </span>
+                  {cierreCounted === 0 ? (
+                    <span className="text-sm font-bold text-zinc-400">Escribe el conteo</span>
+                  ) : (
+                    <>
+                      <span className={`text-lg font-black ${
+                        cierreDifference === 0 ? "text-emerald-700" : "text-red-700"
+                      }`}>
+                        {cierreDifference > 0 ? "+" : ""}{formatCLP(cierreDifference)}
+                      </span>
+                      <span className="block text-[10px] font-bold mt-0.5">
+                        {cierreDifference === 0
+                          ? "✓ La caja cuadra"
+                          : cierreDifference < 0
+                          ? "Falta dinero en el cajón"
+                          : "Sobra dinero en el cajón"}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Breakdown by payment method */}
+            <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm">
+              <h4 className="font-extrabold text-zinc-950 text-sm">Desglose por medio de pago</h4>
+              <p className="text-[11px] text-zinc-500 mt-0.5 mb-3">
+                Para cuadrar contra el comprobante del datáfono y las transferencias recibidas.
+              </p>
+              <div className="space-y-1.5">
+                {cierre.byMethod.map((row) => (
+                  <div key={row.label} className="flex items-center justify-between text-xs border-b border-zinc-100 pb-1.5">
+                    <span className="text-zinc-600 font-semibold">{row.label}</span>
+                    <span className="font-black text-zinc-900 tabular-nums">{formatCLP(row.amount)}</span>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between pt-1.5">
+                  <span className="text-zinc-900 font-black text-sm">Total ventas</span>
+                  <span className="font-black text-zinc-950 text-base tabular-nums">{formatCLP(cierre.total)}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-zinc-500">
+                  <span className="font-semibold">Propinas (incluidas arriba)</span>
+                  <span className="font-bold tabular-nums">{formatCLP(cierre.tips)}</span>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 border-t border-zinc-100 pt-3">
+                <div>
+                  <span className="text-[10px] font-black uppercase text-zinc-500 block">Mesas cobradas</span>
+                  <span className="text-base font-black text-zinc-900">{cierre.closedCount}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] font-black uppercase text-zinc-500 block">Ticket promedio</span>
+                  <span className="text-base font-black text-zinc-900">{formatCLP(cierre.averageTicket)}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Things worth a second look before closing the day */}
+            <div className="bg-white border border-zinc-200 rounded-2xl p-5 shadow-sm">
+              <h4 className="font-extrabold text-zinc-950 text-sm">Revisar antes de cerrar</h4>
+              <p className="text-[11px] text-zinc-500 mt-0.5 mb-3">
+                Movimientos del día que conviene mirar. No significan que algo esté mal.
+              </p>
+              {cierre.alerts.length === 0 ? (
+                <p className="text-xs text-emerald-700 font-bold">✓ Sin movimientos que revisar.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {cierre.alerts.map((alert, index) => (
+                    <div key={index} className="flex items-start gap-2 text-xs">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                      <span className="text-zinc-700">{alert}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button
+                onClick={handlePrintCierre}
+                className="mt-4 w-full bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5" /> Imprimir reporte de cierre
+              </button>
+            </div>
           </div>
         )}
 
