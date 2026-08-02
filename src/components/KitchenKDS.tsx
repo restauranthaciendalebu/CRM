@@ -16,11 +16,10 @@ import {
   LogOut,
   Flame,
   Check,
-  CheckCheck,
   ChevronLeft,
   ChevronRight
 } from "lucide-react";
-import { isDirectServiceProduct } from "../orderUtils";
+import { hasPendingKitchenWork, isPendingKitchenItem } from "../orderUtils";
 import { playKitchenNewOrderSound, setupAudioUnlock } from "../audioUtils";
 
 interface KitchenKDSProps {
@@ -86,21 +85,16 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
     return () => clearInterval(timer);
   }, []);
 
-  const isKitchenProduct = (productId: string) => {
-    const product = state.products.find((candidate) => candidate.id === productId);
-    if (product && isDirectServiceProduct(product)) {
-      return false;
-    }
-    return true;
-  };
+  const findProduct = (productId: string) =>
+    state.products.find((candidate) => candidate.id === productId);
 
-  const isVisibleKitchenItem = (item: OrderItem) => isKitchenProduct(item.productId);
+  const isVisibleKitchenItem = (item: OrderItem) => isPendingKitchenItem(item, findProduct);
 
-  // All active orders with food items stay on the kitchen display.
+  // Orders still owing at least one dish stay on the kitchen display.
   const filteredOrders = state.orders
     .filter((order) =>
       order.status !== OrderStatus.CLOSED &&
-      order.items.some(isVisibleKitchenItem)
+      hasPendingKitchenWork(order, findProduct)
     );
 
   // --- Priority sorting: urgent (>10 min) → cooking → ready ---
@@ -112,7 +106,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
       it.status === OrderItemStatus.PREPARING
     );
     const allReady = visibleItems.length > 0 && visibleItems.every((it) =>
-      it.status === OrderItemStatus.READY || it.status === OrderItemStatus.DELIVERED
+      it.status === OrderItemStatus.READY
     );
 
     if (hasCookingItems) {
@@ -369,10 +363,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
               it.status === OrderItemStatus.PREPARING
             );
             const allVisibleItemsReady = visibleItems.length > 0 && visibleItems.every((it) =>
-              it.status === OrderItemStatus.READY || it.status === OrderItemStatus.DELIVERED
-            );
-            const allVisibleItemsDelivered = visibleItems.length > 0 && visibleItems.every((it) =>
-              it.status === OrderItemStatus.DELIVERED
+              it.status === OrderItemStatus.READY
             );
             const timerStartedAt = order.kitchenSentAt || order.updatedAt || order.createdAt;
             const elapsedMins = hasCookingItems ? getElapsedMinutes(timerStartedAt) : 0;
@@ -434,7 +425,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                   }`}>
                     <Clock className="w-3 h-3" />
                     <span>
-                      {hasCookingItems ? getElapsedTimeText(timerStartedAt) : allVisibleItemsDelivered ? "Servido" : "Listo"}
+                      {hasCookingItems ? getElapsedTimeText(timerStartedAt) : "Listo"}
                     </span>
                     {isLate && <AlertTriangle className="w-3 h-3 text-red-400 animate-bounce" />}
                   </div>
@@ -515,15 +506,9 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                                 </button>
                               )}
 
-                              {/* 3. Delivered status icon */}
-                              {it.status === OrderItemStatus.DELIVERED && (
-                                <div 
-                                  className="p-1 rounded-md border border-zinc-800 bg-zinc-900 text-zinc-600 flex items-center justify-center" 
-                                  title="Entregado al cliente"
-                                >
-                                  <CheckCheck className="w-3.5 h-3.5 stroke-[2]" />
-                                </div>
-                              )}
+                              {/* Served items are not drawn: marking one removes
+                                  it from the ticket, so there is no delivered
+                                  state left to show here. */}
                             </div>
                           </div>
 
