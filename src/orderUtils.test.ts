@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hasPendingKitchenWork, isPendingKitchenItem } from "./orderUtils";
+import { hasPendingKitchenWork, isPendingKitchenItem, pendingKitchenItems } from "./orderUtils";
 import { OrderItemStatus, OrderStatus } from "./types";
 import type { Order, OrderItem, Product } from "./types";
 
@@ -90,4 +90,56 @@ test("an order of drinks alone never shows a ticket", () => {
 test("a dish whose product is missing is still shown", () => {
   const order = orderWith([item("i1", "p_borrado", OrderItemStatus.SENT_TO_KITCHEN)]);
   assert.equal(hasPendingKitchenWork(order, findProduct), true);
+});
+
+/* ─── Deliveries: nobody plates them, so they finish one step earlier ─── */
+
+const IS_DELIVERY = true;
+
+test("a delivery dish leaves the display as soon as it is ready", () => {
+  const ready = item("i1", PLATO.id, OrderItemStatus.READY);
+
+  assert.equal(isPendingKitchenItem(ready, findProduct, IS_DELIVERY), false);
+  // The same dish on a table still waits to be served.
+  assert.equal(isPendingKitchenItem(ready, findProduct), true);
+});
+
+test("a delivery still being cooked stays on the display", () => {
+  for (const status of [
+    OrderItemStatus.PENDING,
+    OrderItemStatus.SENT_TO_KITCHEN,
+    OrderItemStatus.RECEIVED,
+    OrderItemStatus.PREPARING,
+  ]) {
+    assert.equal(
+      isPendingKitchenItem(item("i", PLATO.id, status), findProduct, IS_DELIVERY),
+      true,
+      status,
+    );
+  }
+});
+
+test("a delivery ticket goes once every dish is ready", () => {
+  const order = orderWith([
+    item("i1", PLATO.id, OrderItemStatus.READY),
+    item("i2", PLATO.id, OrderItemStatus.PREPARING),
+  ]);
+  assert.equal(hasPendingKitchenWork(order, findProduct, IS_DELIVERY), true);
+  assert.deepEqual(
+    pendingKitchenItems(order, findProduct, IS_DELIVERY).map((it) => it.id),
+    ["i2"],
+  );
+
+  order.items[1].status = OrderItemStatus.READY;
+  assert.equal(hasPendingKitchenWork(order, findProduct, IS_DELIVERY), false);
+});
+
+// The courier tap may still happen later from the waiter screen; it must not
+// bring the ticket back.
+test("marking a ready delivery as served changes nothing on the display", () => {
+  const order = orderWith([item("i1", PLATO.id, OrderItemStatus.READY)]);
+  assert.equal(hasPendingKitchenWork(order, findProduct, IS_DELIVERY), false);
+
+  order.items[0].status = OrderItemStatus.DELIVERED;
+  assert.equal(hasPendingKitchenWork(order, findProduct, IS_DELIVERY), false);
 });

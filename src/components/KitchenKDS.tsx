@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   RestaurantState, 
   Order, 
-  OrderItem, 
-  OrderItemStatus, 
+  OrderItemStatus,
   OrderStatus,
   DELIVERY_ZONE
 } from "../types";
@@ -19,7 +18,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from "lucide-react";
-import { hasPendingKitchenWork, isPendingKitchenItem } from "../orderUtils";
+import { hasPendingKitchenWork, pendingKitchenItems } from "../orderUtils";
 import { playKitchenNewOrderSound, setupAudioUnlock } from "../audioUtils";
 
 interface KitchenKDSProps {
@@ -88,18 +87,25 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
   const findProduct = (productId: string) =>
     state.products.find((candidate) => candidate.id === productId);
 
-  const isVisibleKitchenItem = (item: OrderItem) => isPendingKitchenItem(item, findProduct);
+  // A delivery is a virtual table: the order carries the destination and the
+  // table sits in the delivery zone. Either marker is enough to recognise one.
+  const isDeliveryOrder = (order: Order) =>
+    Boolean(order.delivery) ||
+    state.tables.find((candidate) => candidate.id === order.tableId)?.zone === DELIVERY_ZONE;
+
+  const visibleItemsOf = (order: Order) =>
+    pendingKitchenItems(order, findProduct, isDeliveryOrder(order));
 
   // Orders still owing at least one dish stay on the kitchen display.
   const filteredOrders = state.orders
     .filter((order) =>
       order.status !== OrderStatus.CLOSED &&
-      hasPendingKitchenWork(order, findProduct)
+      hasPendingKitchenWork(order, findProduct, isDeliveryOrder(order))
     );
 
   // --- Priority sorting: urgent (>10 min) → cooking → ready ---
   const getOrderPriority = (order: Order): number => {
-    const visibleItems = order.items.filter(isVisibleKitchenItem);
+    const visibleItems = visibleItemsOf(order);
     const hasCookingItems = visibleItems.some((it) =>
       it.status === OrderItemStatus.SENT_TO_KITCHEN ||
       it.status === OrderItemStatus.RECEIVED ||
@@ -133,10 +139,8 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
     setupAudioUnlock();
     const currentKitchenItemIds: string[] = [];
     filteredOrders.forEach((o) => {
-      o.items.forEach((it) => {
-        if (isVisibleKitchenItem(it)) {
-          currentKitchenItemIds.push(it.id);
-        }
+      visibleItemsOf(o).forEach((it) => {
+        currentKitchenItemIds.push(it.id);
       });
     });
 
@@ -268,11 +272,6 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
     return table ? table.number : "?";
   };
 
-  // Deliveries get packed rather than plated, so the ticket has to say so
-  // instead of reading like any other table.
-  const isDeliveryTable = (tableId: string) =>
-    state.tables.find((t) => t.id === tableId)?.zone === DELIVERY_ZONE;
-
   const getWaiterName = (waiterId?: string) => {
     if (!waiterId) return "Cliente (QR)";
     const waiter = state.users.find((u) => u.id === waiterId);
@@ -356,7 +355,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
       <div className={`flex-1 px-3 py-2 ${isMobile ? "overflow-y-auto" : "overflow-hidden"}`}>
         <div className={isMobile ? "flex flex-col gap-3 pb-8" : "grid grid-cols-3 gap-2.5 h-full"}>
           {(isMobile ? sortedOrders : displayedOrders).map((order) => {
-            const visibleItems = order.items.filter(isVisibleKitchenItem);
+            const visibleItems = visibleItemsOf(order);
             const hasCookingItems = visibleItems.some((it) =>
               it.status === OrderItemStatus.SENT_TO_KITCHEN ||
               it.status === OrderItemStatus.RECEIVED ||
@@ -394,7 +393,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                     : "bg-zinc-800/50"
                 }`}>
                   <div className="min-w-0">
-                    {isDeliveryTable(order.tableId) ? (
+                    {isDeliveryOrder(order) ? (
                       <>
                         <h3 className="font-extrabold text-base text-blue-300 leading-tight">
                           🛵 DELIVERY {getTableNumber(order.tableId)}
