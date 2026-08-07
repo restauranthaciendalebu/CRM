@@ -92,6 +92,20 @@ test("a dish whose product is missing is still shown", () => {
   assert.equal(hasPendingKitchenWork(order, findProduct), true);
 });
 
+// One malformed order must not take the whole kitchen display down with it:
+// losing every other table's ticket mid-service is far worse than skipping
+// the bad one.
+test("an order with no items array is skipped, not thrown on", () => {
+  const broken = { id: "o_roto", tableId: "t_1", status: OrderStatus.PREPARING } as unknown as Order;
+
+  assert.equal(hasPendingKitchenWork(broken, findProduct), false);
+  assert.deepEqual(pendingKitchenItems(broken, findProduct), []);
+
+  const nulled = orderWith(null as unknown as OrderItem[]);
+  assert.equal(hasPendingKitchenWork(nulled, findProduct), false);
+  assert.deepEqual(pendingKitchenItems(nulled, findProduct), []);
+});
+
 /* ─── Deliveries: nobody plates them, so they finish one step earlier ─── */
 
 const IS_DELIVERY = true;

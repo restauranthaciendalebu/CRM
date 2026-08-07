@@ -41,8 +41,16 @@ export function isPendingKitchenItem(
   return item.status !== OrderItemStatus.DELIVERED;
 }
 
-/** The dishes of an order that the kitchen display should still be showing. */
+/**
+ * The dishes of an order that the kitchen display should still be showing.
+ *
+ * An order with no items array is treated as having nothing outstanding rather
+ * than throwing. One malformed document must not be able to take down the
+ * whole kitchen display: the cooks would lose every other table's ticket in
+ * the middle of service, which is far worse than silently skipping the bad one.
+ */
 export function pendingKitchenItems(order: Order, findProduct: FindProduct, isDelivery = false) {
+  if (!Array.isArray(order?.items)) return [];
   return order.items.filter((item) => isPendingKitchenItem(item, findProduct, isDelivery));
 }
 
@@ -52,5 +60,6 @@ export function pendingKitchenItems(order: Order, findProduct: FindProduct, isDe
  * — and a later round puts it back, because the new dishes are owed again.
  */
 export function hasPendingKitchenWork(order: Order, findProduct: FindProduct, isDelivery = false) {
+  if (!Array.isArray(order?.items)) return false;
   return order.items.some((item) => isPendingKitchenItem(item, findProduct, isDelivery));
 }

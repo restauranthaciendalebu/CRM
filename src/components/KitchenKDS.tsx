@@ -84,20 +84,28 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
     return () => clearInterval(timer);
   }, []);
 
+  // Every collection is read defensively. This screen runs unattended on a TV
+  // through a whole service, so a half-loaded or malformed state has to degrade
+  // into a thinner display, never into a blank one the cooks cannot recover.
+  const products = Array.isArray(state.products) ? state.products : [];
+  const tables = Array.isArray(state.tables) ? state.tables : [];
+  const users = Array.isArray(state.users) ? state.users : [];
+  const orders = Array.isArray(state.orders) ? state.orders : [];
+
   const findProduct = (productId: string) =>
-    state.products.find((candidate) => candidate.id === productId);
+    products.find((candidate) => candidate.id === productId);
 
   // A delivery is a virtual table: the order carries the destination and the
   // table sits in the delivery zone. Either marker is enough to recognise one.
   const isDeliveryOrder = (order: Order) =>
     Boolean(order.delivery) ||
-    state.tables.find((candidate) => candidate.id === order.tableId)?.zone === DELIVERY_ZONE;
+    tables.find((candidate) => candidate.id === order.tableId)?.zone === DELIVERY_ZONE;
 
   const visibleItemsOf = (order: Order) =>
     pendingKitchenItems(order, findProduct, isDeliveryOrder(order));
 
   // Orders still owing at least one dish stay on the kitchen display.
-  const filteredOrders = state.orders
+  const filteredOrders = orders
     .filter((order) =>
       order.status !== OrderStatus.CLOSED &&
       hasPendingKitchenWork(order, findProduct, isDeliveryOrder(order))
@@ -268,13 +276,13 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
   };
 
   const getTableNumber = (tableId: string) => {
-    const table = state.tables.find((t) => t.id === tableId);
+    const table = tables.find((t) => t.id === tableId);
     return table ? table.number : "?";
   };
 
   const getWaiterName = (waiterId?: string) => {
     if (!waiterId) return "Cliente (QR)";
-    const waiter = state.users.find((u) => u.id === waiterId);
+    const waiter = users.find((u) => u.id === waiterId);
     return waiter ? waiter.name.replace(" (Mozo)", "") : "Mozo";
   };
 
@@ -433,7 +441,7 @@ export default function KitchenKDS({ state, onRefreshState, onLogout }: KitchenK
                 {/* Items List (Full height & compact padding to display entire order) */}
                 <div className="px-2.5 py-1.5 flex-1 overflow-y-auto space-y-1">
                   {visibleItems.map((it) => {
-                      const prod = state.products.find((p) => p.id === it.productId);
+                      const prod = findProduct(it.productId);
                       const productName = prod ? prod.name : `Plato (#${it.productId})`;
                       const isUpdating = pendingItemIds.includes(it.id);
                       const isPending = it.status === OrderItemStatus.PENDING;
