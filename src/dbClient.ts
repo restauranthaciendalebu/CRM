@@ -1498,7 +1498,7 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
     const orderCloseMatch = path.match(/^\/api\/orders\/([^\/]+)\/close$/);
     if (orderCloseMatch && method === "POST") {
       const id = orderCloseMatch[1];
-      const { payments, customerPhone, totalAmount, discount, tip } = body;
+      const { payments, customerPhone, totalAmount, discount, tip, operatorName } = body;
       let errorMsg = "";
       let createdPayments: Array<{
         id: string;
@@ -1597,12 +1597,16 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
           order.customerPhone = accountCustomer.phone;
         }
 
+        // Billing terms are frozen by the first payment, so a discount is
+        // decided exactly once even when the bill is split.
+        let billingTermsJustFrozen = false;
         if (order.billingTotal === undefined) {
           order.billingSubtotal = proposedSubtotal;
           order.billingDiscount = proposedDiscount;
           order.billingTip = proposedTip;
           if (deliveryFee > 0) order.billingDeliveryFee = deliveryFee;
           order.billingTotal = proposedBillingTotal;
+          billingTermsJustFrozen = true;
         }
 
         createdPayments = [];
@@ -1633,6 +1637,23 @@ export async function handleLocalApiRequest(url: string, init?: RequestInit): Pr
         order.updatedAt = paymentCreatedAt;
 
         const table = s.tables.find(t => t.id === order.tableId);
+
+        // Money given away needs a name against it. Nothing else in this
+        // handler wrote to the audit trail, so a discount used to leave no
+        // trace beyond the total itself.
+        if (billingTermsJustFrozen && proposedDiscount > 0) {
+          const percent = proposedSubtotal > 0
+            ? Math.round((proposedDiscount / proposedSubtotal) * 100)
+            : 0;
+          if (!s.auditLogs) s.auditLogs = [];
+          s.auditLogs.push({
+            id: "audit_" + Math.random().toString(36).substring(2, 11),
+            action: "Descuento Aplicado",
+            details: `${operatorName || "Personal"} aplicó ${percent}% de descuento ($${proposedDiscount.toLocaleString("es-CL")}) en la Mesa ${table ? table.number : "?"}.`,
+            createdAt: paymentCreatedAt,
+          });
+        }
+
         if (orderClosed) {
           order.status = OrderStatus.CLOSED;
           if (table) table.status = TableStatus.FREE;

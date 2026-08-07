@@ -55,7 +55,14 @@ import { isDirectServiceProduct } from "../orderUtils";
 import AddTableModal from "./AddTableModal";
 import WaiterReceiptHistory from "./WaiterReceiptHistory";
 import DailyMenuManager from "./DailyMenuManager";
-import { allocateRemainingAdjustment, getNextPaymentAmount, getRemainingBalance } from "../billingUtils";
+import {
+  allocateRemainingAdjustment,
+  clampDiscountPercent,
+  DISCOUNT_PRESETS,
+  DISCOUNT_WARNING_PERCENT,
+  getNextPaymentAmount,
+  getRemainingBalance,
+} from "../billingUtils";
 import { resolveNotificationDirectly } from "../dbClient";
 
 interface MozoViewProps {
@@ -151,6 +158,16 @@ export default function MozoView({
   const [billingCustomAmount, setBillingCustomAmount] = useState(0);
   const [selectedPromoCode, setSelectedPromoCode] = useState("");
   const [appliedDiscount, setAppliedDiscount] = useState(0);
+  const [isCustomDiscount, setIsCustomDiscount] = useState(false);
+
+  // Keep the preset row and the "Otro" box agreeing on one number: a
+  // percentage that is not one of the presets has to show up in the box, or it
+  // would be applied with nothing on screen indicating it.
+  const selectDiscountPercent = (percent: unknown) => {
+    const clamped = clampDiscountPercent(percent);
+    setAppliedDiscount(clamped);
+    setIsCustomDiscount(clamped > 0 && !DISCOUNT_PRESETS.includes(clamped));
+  };
   const [tipPercent, setTipPercent] = useState(10); // 10% default
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(PaymentMethod.CASH);
   const [billingCreditCustomerId, setBillingCreditCustomerId] = useState("");
@@ -1118,7 +1135,7 @@ export default function MozoView({
     const promo = state.promotions.find(p => p.code.toUpperCase() === selectedPromoCode.toUpperCase() && p.active);
     if (promo) {
       if (promo.type === "DISCOUNT") {
-        setAppliedDiscount(promo.value);
+        selectDiscountPercent(promo.value);
         showBanner(`Cupón aplicado: ${promo.value}% de descuento.`);
       } else {
         showBanner("Cupón válido, se aplicará al finalizar.", "success");
@@ -1235,7 +1252,8 @@ export default function MozoView({
           customerPhone: selectedBillingCreditCustomer?.phone || activeOrder.customerPhone || undefined,
           totalAmount: billingSubtotal,
           discount: billingDiscountAmount,
-          tip: billingTipAmount
+          tip: billingTipAmount,
+          operatorName: activeUser?.name
         })
       });
 
@@ -2584,7 +2602,7 @@ export default function MozoView({
                         setBillingCreditCustomerId("");
                         setBillingSplitParts(Math.max(1, (activeOrder.customerCount || 2) - activeOrderPayments.length));
                         if (activeOrder.billingSubtotal && activeOrder.billingTotal !== undefined) {
-                          setAppliedDiscount(Math.round(((activeOrder.billingDiscount || 0) / activeOrder.billingSubtotal) * 100));
+                          selectDiscountPercent(((activeOrder.billingDiscount || 0) / activeOrder.billingSubtotal) * 100);
                           setTipPercent(Math.round(((activeOrder.billingTip || 0) / activeOrder.billingSubtotal) * 100));
                         }
                       }}
@@ -3051,6 +3069,7 @@ export default function MozoView({
                           setBillingSuccess(false);
                           if (billingClosedAfterPayment) setSelectedTable(null);
                           setAppliedDiscount(0);
+                          setIsCustomDiscount(false);
                           setSelectedPromoCode("");
                           setTipPercent(10);
                           setBillingCreditCustomerId("");
@@ -3210,6 +3229,80 @@ export default function MozoView({
                           </button>
                         ))}
                       </div>
+                    </div>
+
+                    {/* Discount cards handed out by the owner. Applied here by
+                        percentage, since the card states one and there is no
+                        code on it to type. */}
+                    <div className={`space-y-1.5 ${billingTermsLocked ? "opacity-60" : ""}`}>
+                      <span className="text-[10px] font-black uppercase text-zinc-400 block tracking-wider">Descuento por tarjeta</span>
+                      <div className="grid grid-cols-5 gap-1.5">
+                        <button
+                          onClick={() => { setAppliedDiscount(0); setIsCustomDiscount(false); }}
+                          disabled={billingTermsLocked}
+                          className={`py-2 border rounded-xl text-xs font-bold transition-all ${
+                            appliedDiscount === 0 && !isCustomDiscount
+                              ? "bg-zinc-900 border-zinc-900 text-white"
+                              : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                          } ${billingTermsLocked ? "cursor-not-allowed" : "cursor-pointer"}`}
+                        >
+                          Sin
+                        </button>
+                        {DISCOUNT_PRESETS.map((preset) => (
+                          <button
+                            key={preset}
+                            onClick={() => { setAppliedDiscount(preset); setIsCustomDiscount(false); }}
+                            disabled={billingTermsLocked}
+                            className={`py-2 border rounded-xl text-xs font-bold transition-all ${
+                              appliedDiscount === preset && !isCustomDiscount
+                                ? "bg-red-100 border-red-300 text-red-900"
+                                : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                            } ${billingTermsLocked ? "cursor-not-allowed" : "cursor-pointer"}`}
+                          >
+                            {preset}%
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => setIsCustomDiscount(true)}
+                          disabled={billingTermsLocked}
+                          className={`py-2 border rounded-xl text-xs font-bold transition-all ${
+                            isCustomDiscount
+                              ? "bg-red-100 border-red-300 text-red-900"
+                              : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50"
+                          } ${billingTermsLocked ? "cursor-not-allowed" : "cursor-pointer"}`}
+                        >
+                          Otro
+                        </button>
+                      </div>
+
+                      {isCustomDiscount && (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            autoFocus
+                            placeholder="Ej: 25"
+                            value={appliedDiscount || ""}
+                            onChange={(e) => setAppliedDiscount(clampDiscountPercent(e.target.value))}
+                            disabled={billingTermsLocked}
+                            className="w-24 bg-zinc-50 border border-zinc-200 rounded-xl p-2.5 text-xs font-bold text-zinc-900 focus:outline-none focus:border-amber-500"
+                          />
+                          <span className="text-xs font-bold text-zinc-500">% de descuento</span>
+                        </div>
+                      )}
+
+                      {appliedDiscount > 0 && (
+                        <div className={`rounded-xl border px-3 py-2 text-[11px] font-semibold ${
+                          appliedDiscount > DISCOUNT_WARNING_PERCENT
+                            ? "border-red-300 bg-red-50 text-red-900"
+                            : "border-zinc-200 bg-zinc-50 text-zinc-600"
+                        }`}>
+                          {appliedDiscount > DISCOUNT_WARNING_PERCENT && "⚠️ "}
+                          Se descuentan {formatCLP(billingDiscountAmount)} ({appliedDiscount}% de {formatCLP(billingSubtotal)}).
+                          {appliedDiscount > DISCOUNT_WARNING_PERCENT && " Revisa que sea correcto antes de cobrar."}
+                        </div>
+                      )}
                     </div>
 
                     {/* Promo Codes */}

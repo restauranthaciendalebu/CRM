@@ -647,7 +647,7 @@ async function startServer() {
   // 9. Close order & pay (supports splitting bill, records loyalty points)
   app.post("/api/orders/:id/close", (req, res) => {
     const { id } = req.params;
-    const { payments, customerPhone, totalAmount, discount, tip } = req.body;
+    const { payments, customerPhone, totalAmount, discount, tip, operatorName } = req.body;
 
     if (!payments || !Array.isArray(payments)) {
       return res.status(400).json({ error: "Payments data is required" });
@@ -713,11 +713,15 @@ async function startServer() {
         order.customerPhone = accountCustomer.phone;
       }
 
+      // Billing terms are frozen by the first payment, so a discount is
+      // decided exactly once even when the bill is split.
+      let billingTermsJustFrozen = false;
       if (order.billingTotal === undefined) {
         order.billingSubtotal = proposedSubtotal;
         order.billingDiscount = proposedDiscount;
         order.billingTip = proposedTip;
         order.billingTotal = proposedBillingTotal;
+        billingTermsJustFrozen = true;
       }
 
       const paymentCreatedAt = new Date().toISOString();
@@ -747,6 +751,22 @@ async function startServer() {
       order.updatedAt = paymentCreatedAt;
 
       const table = state.tables.find(t => t.id === order.tableId);
+
+      // Money given away needs a name against it. Kept in step with the same
+      // block in dbClient.ts, which is what production runs.
+      if (billingTermsJustFrozen && proposedDiscount > 0) {
+        const percent = proposedSubtotal > 0
+          ? Math.round((proposedDiscount / proposedSubtotal) * 100)
+          : 0;
+        if (!state.auditLogs) state.auditLogs = [];
+        state.auditLogs.push({
+          id: "audit_" + Math.random().toString(36).substr(2, 9),
+          action: "Descuento Aplicado",
+          details: `${operatorName || "Personal"} aplicó ${percent}% de descuento ($${proposedDiscount.toLocaleString("es-CL")}) en la Mesa ${table ? table.number : "?"}.`,
+          createdAt: paymentCreatedAt
+        });
+      }
+
       if (orderClosed) {
         order.status = OrderStatus.CLOSED;
         if (table) table.status = TableStatus.FREE;
