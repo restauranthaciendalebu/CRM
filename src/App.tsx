@@ -122,8 +122,12 @@ function AppContent() {
     return () => unsubscribe();
   }, []);
 
+  // Only seed tables into a genuinely empty restaurant. This used to top the
+  // room back up to twelve whenever it fell short, which meant a table the
+  // staff deliberately deleted was recreated by the next person to open the
+  // app — the deletion looked like it had failed, over and over.
   useEffect(() => {
-    if (!state || state.tables.length >= 12 || hasRequestedDefaultTables.current) return;
+    if (!state || state.tables.length > 0 || hasRequestedDefaultTables.current) return;
     hasRequestedDefaultTables.current = true;
     void fetch("/api/tables/ensure-defaults", { method: "POST" }).catch((error) => {
       hasRequestedDefaultTables.current = false;

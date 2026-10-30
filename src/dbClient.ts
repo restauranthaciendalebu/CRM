@@ -61,6 +61,20 @@ const FULL_RESYNC_MIN_INTERVAL_MS = 30 * 1000;
 let quotaBlockedUntil = 0;
 let lastFullResyncAt = 0;
 
+// How far back the operational screens subscribe. Orders and payments are
+// append-only and live as long as the restaurant does, but a waiter is only
+// ever working with current service plus a few days of receipts to reprint.
+// Subscribing to the whole history meant every sign-in re-read every order
+// and payment ever taken, which is what exhausts the daily Firestore quota —
+// and an exhausted quota makes writes disappear without telling anyone.
+// Admin keeps the full history, because the reports genuinely need it.
+// Orders keep a wider window than payments on purpose: a table that got stuck
+// open has to stay visible or nobody can bill it, and that is worth far more
+// than the reads it costs. Receipts to reprint go stale much faster.
+const ORDER_WINDOW_DAYS = 30;
+const PAYMENT_WINDOW_DAYS = 7;
+let signedInRole: Role | undefined;
+
 // Cache local of the database state
 let currentCachedState: RestaurantState | null = null;
 let currentClientState: RestaurantState | null = null;
@@ -215,11 +229,13 @@ async function getReadableCollections(): Promise<readonly CollectionField[]> {
   const currentUser = auth.currentUser;
   if (!currentUser || currentUser.isAnonymous) {
     canReadRecoveryArchive = false;
+    signedInRole = undefined;
     return PUBLIC_COLLECTIONS;
   }
   const accessSnapshot = await getDoc(doc(db, "access", currentUser.uid));
   const role = accessSnapshot.data()?.role as Role | undefined;
   canReadRecoveryArchive = role === Role.ADMIN;
+  signedInRole = role;
   if (role === Role.ADMIN) return COLLECTION_FIELDS;
   if (role === Role.WAITER) return WAITER_COLLECTIONS;
   if (role === Role.KITCHEN) return KITCHEN_COLLECTIONS;
@@ -241,7 +257,7 @@ export async function refreshStateFromServer() {
   const next = cloneState(currentCachedState);
   const fields = await getReadableCollections();
   await Promise.all(fields.map(async (field) => {
-    const snapshot = await getDocs(collection(db, field));
+    const snapshot = await getDocs(scopedSource(field));
     (next as any)[field] = snapshot.docs.map((item) => item.data());
   }));
   const configSnapshot = await getDoc(doc(db, "config", "restaurant"));
@@ -252,6 +268,37 @@ export async function refreshStateFromServer() {
   }
   currentCachedState = next;
   publishState(next);
+}
+
+/**
+ * What a screen actually subscribes to for a collection.
+ *
+ * Every filter here is on a single field, so Firestore's automatic indexes
+ * cover them and no composite index has to be deployed first — a missing
+ * index fails the listener at runtime, which would empty the screen instead
+ * of just slowing it down.
+ */
+function scopedSource(field: string) {
+  const base = collection(db, field);
+
+  // Resolved call-the-waiter requests are discarded by every screen that
+  // reads them, but they were still being downloaded for the life of the
+  // restaurant: marking one resolved never deleted it.
+  if (field === "notifications") {
+    return query(base, where("resolved", "==", false));
+  }
+
+  if (signedInRole === Role.ADMIN) return base;
+
+  if (field === "orders" || field === "payments") {
+    const days = field === "orders" ? ORDER_WINDOW_DAYS : PAYMENT_WINDOW_DAYS;
+    // createdAt is a stored ISO string, so a lexicographic range is a
+    // chronological one.
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    return query(base, where("createdAt", ">=", cutoff));
+  }
+
+  return base;
 }
 
 async function startFirestoreSubscriptions() {
@@ -329,7 +376,7 @@ async function startFirestoreSubscriptions() {
         commit(field);
         continue;
       }
-      firestoreUnsubscribers.push(onSnapshot(collection(db, field), (snapshot) => {
+      firestoreUnsubscribers.push(onSnapshot(scopedSource(field), (snapshot) => {
         if (field === "notifications") {
           const allNotifs = snapshot.docs.map((item) => item.data() as any);
           const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
